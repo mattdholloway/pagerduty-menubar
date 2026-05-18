@@ -7,19 +7,39 @@ struct MenuView: View {
     @Environment(\.openSettings) private var openSettings
 
     @State private var search: String = ""
+    @State private var tab: Tab = .schedules
+
+    enum Tab: String, CaseIterable, Hashable {
+        case schedules = "Schedules"
+        case incidents = "Incidents"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            tabBar
+            Divider()
+            // Cross-tab strips so a failed/undoable incident action is
+            // never invisible just because you've switched tabs.
+            VStack(alignment: .leading, spacing: 8) {
+                incidentErrorBanner
+                incidentUndoStrip
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
             content
             Divider()
             footer
         }
         .onChange(of: search) { _, newValue in
-            if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if tab == .incidents, !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 store.loadOtherIncidentsIfNeeded()
             }
+        }
+        .onChange(of: tab) { _, _ in
+            // Reset search on tab switch — the term rarely makes sense across.
+            search = ""
         }
         .task {
             while !Task.isCancelled {
@@ -28,6 +48,57 @@ struct MenuView: View {
                 await store.refreshIncidents()
             }
         }
+    }
+
+    // MARK: - Tab bar
+
+    private var tabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(Tab.allCases, id: \.self) { t in
+                tabButton(t)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func tabButton(_ t: Tab) -> some View {
+        let active = (tab == t)
+        let count: Int? = {
+            switch t {
+            case .schedules: return nil
+            case .incidents:
+                let c = store.myActiveIncidents.count
+                return c == 0 ? nil : c
+            }
+        }()
+        let badgeTint: Color = (t == .incidents && store.myActiveIncidents.contains { $0.urgency == "high" && $0.status == "triggered" }) ? .red : .secondary
+        return Button {
+            tab = t
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: t == .schedules ? "calendar" : "exclamationmark.bubble")
+                    .font(.system(size: 11))
+                Text(t.rawValue)
+                    .font(.system(size: 12, weight: active ? .semibold : .regular))
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(badgeTint.opacity(0.2), in: Capsule())
+                        .foregroundStyle(badgeTint)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(active ? Color.accentColor.opacity(0.18) : Color.clear)
+            )
+            .foregroundStyle(active ? Color.accentColor : .primary)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Header
@@ -123,20 +194,22 @@ struct MenuView: View {
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        incidentErrorBanner
-                        incidentUndoStrip
-                        myIncidentsSection
-                        myUpcomingSection
-                        myOnCallSection
-                        allGroupsSection
-                        otherPoliciesSection
-                        otherIncidentsSection
-                        hiddenSection
+                        switch tab {
+                        case .schedules:
+                            myUpcomingSection
+                            myOnCallSection
+                            allGroupsSection
+                            otherPoliciesSection
+                            hiddenSection
+                        case .incidents:
+                            myIncidentsSection
+                            otherIncidentsSection
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 }
-                .frame(minHeight: 460, maxHeight: 840)
+                .frame(minHeight: 420, maxHeight: 800)
             }
         }
     }
@@ -148,7 +221,7 @@ struct MenuView: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
                 .font(.system(size: 11))
-            TextField("Filter services, people, or policies", text: $search)
+            TextField(tab == .schedules ? "Filter services, people, or policies" : "Filter incidents (title, service, assignee)", text: $search)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
             if !search.isEmpty {

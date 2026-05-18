@@ -364,6 +364,9 @@ final class OnCallStore: ObservableObject {
         case .failed: return "exclamationmark.triangle"
         case .loading where groups.isEmpty: return "bell.badge"
         default:
+            if activeIncidents.contains(where: { $0.status == "triggered" }) {
+                return "exclamationmark.bubble.fill"
+            }
             if let me, iAmOnCall(userID: me.id) { return "bell.fill" }
             return "bell"
         }
