@@ -315,7 +315,7 @@ struct MenuView: View {
                     .foregroundStyle(undo.newStatus == "resolved" ? .green : .blue)
                 Text("\(undo.newStatus.capitalized) “\(undo.title)”")
                     .font(.system(size: 11))
-                    .lineLimit(1)
+                    .truncatedWithTooltip("\(undo.newStatus.capitalized) “\(undo.title)”")
                 Spacer()
                 Button("Undo") { store.undoLastIncidentAction() }
                     .buttonStyle(.borderless)
@@ -666,7 +666,7 @@ private struct PolicyCard: View {
                 }
                 Text(group.policy.summary ?? "Escalation policy")
                     .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
+                    .truncatedWithTooltip(group.policy.summary)
 
                 Spacer(minLength: 4)
 
@@ -776,7 +776,7 @@ private struct CompactAssignmentRow: View {
             Text(assignment.user.summary ?? "Unknown")
                 .font(.system(size: 11))
                 .foregroundStyle(.primary)
-                .lineLimit(1)
+                .truncatedWithTooltip(assignment.user.summary)
             if isMe {
                 Text("You")
                     .font(.system(size: 9, weight: .bold))
@@ -793,8 +793,7 @@ private struct CompactAssignmentRow: View {
                 Text("· \(sched)")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .truncatedWithTooltip(sched)
             }
             Spacer(minLength: 4)
 
@@ -847,17 +846,19 @@ private struct HiddenPolicyRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(group.policy.summary ?? "Escalation policy")
                     .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
+                    .truncatedWithTooltip(group.policy.summary)
                 if let primary = group.primaryLevel?.assignments.first {
-                    Text("Primary: \(primary.user.summary ?? "—")")
+                    let s = "Primary: \(primary.user.summary ?? "—")"
+                    Text(s)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .truncatedWithTooltip(s)
                 } else if !group.services.isEmpty {
-                    Text(group.services.map(\.name).joined(separator: ", "))
+                    let s = group.services.map(\.name).joined(separator: ", ")
+                    Text(s)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .truncatedWithTooltip(s)
                 }
             }
             Spacer()
@@ -932,7 +933,7 @@ private struct AssignmentRow: View {
                 HStack(spacing: 6) {
                     Text(assignment.user.summary ?? "Unknown")
                         .font(.system(size: 12, weight: isPrimary ? .medium : .regular))
-                        .lineLimit(1)
+                        .truncatedWithTooltip(assignment.user.summary)
                     if isMe {
                         Text("You")
                             .font(.system(size: 9, weight: .bold))
@@ -949,9 +950,14 @@ private struct AssignmentRow: View {
                     }
                 }
                 if let sched = assignment.schedule?.summary {
-                    Text(sched).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(sched).font(.system(size: 10)).foregroundStyle(.secondary).truncatedWithTooltip(sched)
                 }
                 if let next = store.nextAfter(assignment: assignment) {
+                    let line: String = {
+                        var s = "Next: \(next.user.summary ?? "—")"
+                        if let st = next.start { s += " · \(Self.handoverFormatter.string(from: st))" }
+                        return s
+                    }()
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.turn.down.right")
                             .font(.system(size: 8))
@@ -965,6 +971,7 @@ private struct AssignmentRow: View {
                             .foregroundStyle(.secondary)
                     }
                     .lineLimit(1)
+                    .help(line)
                 }
             }
             Spacer()
@@ -1120,13 +1127,13 @@ private struct MyShiftRow: View {
                 HStack(spacing: 4) {
                     Text(shift.policySummary ?? "Escalation policy")
                         .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
+                        .truncatedWithTooltip(shift.policySummary)
                     RoleBadge(level: shift.level, compact: true)
                 }
                 Text(captionText)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .truncatedWithTooltip(captionText)
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 1) {
@@ -1227,11 +1234,12 @@ private struct OtherPolicyRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(group.policy.summary ?? "Escalation policy")
                     .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-                Text(primaryUser.map { "Primary: \($0)" } ?? "No one currently on call")
+                    .truncatedWithTooltip(group.policy.summary)
+                let line = primaryUser.map { "Primary: \($0)" } ?? "No one currently on call"
+                Text(line)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .truncatedWithTooltip(line)
             }
             Spacer()
             Button {
@@ -1290,15 +1298,15 @@ private struct IncidentRow: View {
                 HStack(spacing: 4) {
                     Text(incident.title)
                         .font(.system(size: 11, weight: .semibold))
-                        .lineLimit(1)
+                        .truncatedWithTooltip(incident.title)
                     UrgencyBadge(urgency: incident.urgency, status: incident.status)
                 }
                 HStack(spacing: 4) {
                     if let svc = incident.service?.summary {
-                        Text(svc).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(svc).font(.system(size: 10)).foregroundStyle(.secondary).truncatedWithTooltip(svc)
                     }
                     if let assignee = assigneeLabel {
-                        Text("· \(assignee)").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        Text("· \(assignee)").font(.system(size: 10)).foregroundStyle(.secondary).truncatedWithTooltip(assignee)
                     }
                     if let created = incident.created_at {
                         Text("· \(Self.relative.localizedString(for: created, relativeTo: Date()))")

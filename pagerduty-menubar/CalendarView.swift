@@ -95,8 +95,7 @@ struct CalendarPopoverView: View {
                             RoleBadge(level: lvl.level, compact: true)
                             Text(lvl.scheduleSummary ?? "Direct")
                                 .font(.system(size: 10))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                                .truncatedWithTooltip(lvl.scheduleSummary, tail: false)
                         }
                         .padding(.horizontal, 4)
                         .frame(height: rowHeight, alignment: .leading)
