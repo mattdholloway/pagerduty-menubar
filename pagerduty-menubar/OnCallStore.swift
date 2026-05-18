@@ -90,7 +90,7 @@ final class OnCallStore: ObservableObject {
     @Published var recentIncidentAction: IncidentUndo?
 
     // Settings (refresh interval keeps using @AppStorage — it's a simple Int)
-    @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
+    @AppStorage("refreshMinutes") var refreshMinutes: Int = 20
 
     // Persistent ordered/visibility state. Use plain UserDefaults backing so
     // mutations from button actions inside a MenuBarExtra popover reliably
