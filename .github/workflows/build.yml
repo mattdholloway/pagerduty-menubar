@@ -3,9 +3,13 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create Releases on tag pushes
 
 jobs:
   build:
@@ -13,6 +17,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: vers
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION"
 
       - name: Build
         run: |
@@ -23,15 +38,31 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION=${{ steps.vers.outputs.version }} \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             build
 
       - name: Package .app
+        id: pkg
         run: |
           cd build/Build/Products/Release
-          ditto -c -k --sequesterRsrc --keepParent pagerduty-menubar.app pagerduty-menubar.zip
+          ZIP="pagerduty-menubar-${{ steps.vers.outputs.version }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent pagerduty-menubar.app "$ZIP"
+          echo "zip=build/Build/Products/Release/$ZIP" >> "$GITHUB_OUTPUT"
+          ls -lh "$ZIP"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pagerduty-menubar-${{ github.sha }}
-          path: build/Build/Products/Release/pagerduty-menubar.zip
+          name: pagerduty-menubar-${{ steps.vers.outputs.version }}
+          path: ${{ steps.pkg.outputs.zip }}
           retention-days: 14
+
+      - name: Create GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pkg.outputs.zip }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.vers.outputs.version, '-') }}
+

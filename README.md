@@ -79,7 +79,16 @@ persists.
 
 ## 🚀 Install
 
-### Option 1 — Build from source (recommended)
+### Option 1 — Grab a release
+
+Download the latest `pagerduty-menubar-X.Y.Z.zip` from the
+[Releases](https://github.com/mattdholloway/pagerduty-menubar/releases)
+page, unzip, drag `pagerduty-menubar.app` into `/Applications`.
+
+> The release is **not notarized**, so the first launch needs a
+> right-click → **Open** to bypass Gatekeeper.
+
+### Option 2 — Build from source
 
 ```bash
 git clone https://github.com/mattdholloway/pagerduty-menubar.git
@@ -91,7 +100,7 @@ In Xcode: scheme **pagerduty-menubar**, destination **My Mac**,
 `Product → Archive → Distribute App → Copy App`, drag the resulting
 `.app` into `/Applications`.
 
-### Option 2 — Run from Xcode
+### Option 3 — Run from Xcode
 
 Just hit ⌘R. The 🛎️ icon shows up in your menu bar.
 
