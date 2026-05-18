@@ -224,7 +224,7 @@ struct MenuView: View {
         if !all.isEmpty {
             sectionHeader(
                 symbol: "list.bullet.rectangle",
-                title: "My policies",
+                title: "My services & schedules",
                 count: all.count,
                 tint: .secondary
             )
@@ -255,7 +255,7 @@ struct MenuView: View {
 
             sectionHeader(
                 symbol: "tray.full",
-                title: "Other policies",
+                title: "Other services & schedules",
                 count: displayCount,
                 tint: .secondary
             )
@@ -265,7 +265,7 @@ struct MenuView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.system(size: 12))
-                    Text("Type above to search \(all.count) other escalation polic\(all.count == 1 ? "y" : "ies") on this PagerDuty account.")
+                    Text("Type above to search \(all.count) other service\(all.count == 1 ? "" : "s") & schedules on this PagerDuty account.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -275,7 +275,7 @@ struct MenuView: View {
                 .padding(.horizontal, 10)
                 .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
             } else if matches.isEmpty {
-                Text("No other policies match “\(search)”")
+                Text("No other services or schedules match “\(search)”")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 8)
