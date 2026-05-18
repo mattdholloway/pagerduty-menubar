@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🛎️ PagerDuty Menu Bar
+<img src="docs/logo.svg" width="128" height="128" alt="pagerduty-menubar logo">
+
+# PagerDuty Menu Bar
 
 **A pragmatic, native macOS menu bar app for living with PagerDuty.**
 

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="pagerduty-menubar logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#FF9A3D"/>
+      <stop offset="100%" stop-color="#E04A1A"/>
+    </linearGradient>
+    <linearGradient id="bell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F2F2F2"/>
+    </linearGradient>
+    <radialGradient id="dot" cx="0.35" cy="0.35" r="0.7">
+      <stop offset="0%"  stop-color="#FFE585"/>
+      <stop offset="100%" stop-color="#F5B900"/>
+    </radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
+      <feOffset dx="0" dy="10"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.25"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Apple-style squircle background -->
+  <rect x="64" y="64" width="896" height="896" rx="220" ry="220" fill="url(#bg)"/>
+
+  <!-- Subtle inner glow -->
+  <rect x="64" y="64" width="896" height="896" rx="220" ry="220"
+        fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="6"/>
+
+  <g filter="url(#shadow)">
+    <!-- Bell handle -->
+    <rect x="488" y="178" width="48" height="44" rx="18" fill="url(#bell)"/>
+
+    <!-- Bell body: rounded dome flaring at base, with a flared rim -->
+    <path d="
+      M 512 220
+      C 348 220 280 360 280 540
+      C 280 612 268 668 240 716
+      C 230 734 244 756 264 756
+      L 760 756
+      C 780 756 794 734 784 716
+      C 756 668 744 612 744 540
+      C 744 360 676 220 512 220 Z"
+      fill="url(#bell)"/>
+
+    <!-- Clapper -->
+    <circle cx="512" cy="812" r="42" fill="url(#bell)"/>
+
+    <!-- Schedule motif: three subtle horizontal "rotation" bars
+         inscribed into the bell, evoking weekly shifts -->
+    <g fill="#FF7A2D" fill-opacity="0.85">
+      <rect x="390" y="430" width="244" height="22" rx="10"/>
+      <rect x="390" y="480" width="180" height="22" rx="10"/>
+      <rect x="390" y="530" width="220" height="22" rx="10"/>
+    </g>
+  </g>
+
+  <!-- Notification dot, top-right of bell -->
+  <g>
+    <circle cx="780" cy="270" r="100" fill="#FFFFFF"/>
+    <circle cx="780" cy="270" r="84"  fill="url(#dot)"/>
+    <text x="780" y="306" text-anchor="middle"
+          font-family="-apple-system, system-ui, 'Helvetica Neue', sans-serif"
+          font-weight="800" font-size="120" fill="#7A4500">!</text>
+  </g>
+</svg>
