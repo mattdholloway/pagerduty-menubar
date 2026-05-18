@@ -63,27 +63,36 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var state: LoadState = .idle
     @Published var hasToken: Bool = false
 
-    // Settings
+    // Settings (refresh interval keeps using @AppStorage — it's a simple Int)
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
-    @AppStorage("hiddenPolicyIDs") private var hiddenPolicyIDsRaw: String = ""
-    @AppStorage("policyOrder") private var policyOrderRaw: String = ""
-    @AppStorage("pinnedAssignmentKeys") private var pinnedKeysRaw: String = ""
 
-    private(set) var hiddenPolicyIDs: Set<String> = []
-    private(set) var policyOrder: [String] = []
-    private(set) var pinnedKeys: [String] = []  // ordered
+    // Persistent ordered/visibility state. Use plain UserDefaults backing so
+    // mutations from button actions inside a MenuBarExtra popover reliably
+    // re-render observers (@AppStorage updates from inside such actions have
+    // proven unreliable in practice).
+    @Published private(set) var hiddenPolicyIDs: Set<String> = []
+    @Published private(set) var policyOrder: [String] = []
+    @Published private(set) var pinnedKeys: [String] = []  // ordered
+
+    private static let kHiddenPolicyIDs = "hiddenPolicyIDs"
+    private static let kPolicyOrder = "policyOrder"
+    private static let kPinnedKeys = "pinnedAssignmentKeys"
 
     private let api = PagerDutyAPI()
     private var refreshTask: Task<Void, Never>?
     private var timerTask: Task<Void, Never>?
 
     init() {
+        let d = UserDefaults.standard
         self.hasToken = KeychainStore.loadToken() != nil
         self.hiddenPolicyIDs = Set(
-            hiddenPolicyIDsRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+            (d.string(forKey: Self.kHiddenPolicyIDs) ?? "")
+                .split(separator: ",").map(String.init).filter { !$0.isEmpty }
         )
-        self.policyOrder = policyOrderRaw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
-        self.pinnedKeys = pinnedKeysRaw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        self.policyOrder = (d.string(forKey: Self.kPolicyOrder) ?? "")
+            .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        self.pinnedKeys = (d.string(forKey: Self.kPinnedKeys) ?? "")
+            .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         if hasToken {
             startTimer()
             refresh()
@@ -95,16 +104,16 @@ final class OnCallStore: ObservableObject {
     func isPolicyHidden(_ id: String) -> Bool { hiddenPolicyIDs.contains(id) }
 
     func setPolicyHidden(_ id: String, hidden: Bool) {
-        if hidden { hiddenPolicyIDs.insert(id) }
-        else { hiddenPolicyIDs.remove(id) }
-        hiddenPolicyIDsRaw = hiddenPolicyIDs.sorted().joined(separator: ",")
+        var next = hiddenPolicyIDs
+        if hidden { next.insert(id) } else { next.remove(id) }
+        hiddenPolicyIDs = next
+        UserDefaults.standard.set(next.sorted().joined(separator: ","), forKey: Self.kHiddenPolicyIDs)
         objectWillChange.send()
     }
 
     func resetHiddenPolicies() {
-        hiddenPolicyIDs.removeAll()
-        hiddenPolicyIDsRaw = ""
-        objectWillChange.send()
+        hiddenPolicyIDs = []
+        UserDefaults.standard.set("", forKey: Self.kHiddenPolicyIDs)
     }
 
     var hiddenPolicyCount: Int { hiddenPolicyIDs.count }
@@ -140,26 +149,9 @@ final class OnCallStore: ObservableObject {
         return result
     }
 
-    /// Move `sourceID` to the slot currently occupied by `targetID`. If
-    /// `before` is false the source lands immediately after the target.
-    func movePolicy(_ sourceID: String, relativeTo targetID: String, before: Bool = true) {
-        guard sourceID != targetID else { return }
-        // Start from the displayed order so reorders behave predictably even
-        // before we've persisted a full list.
-        var order = orderedGroups.map(\.id)
-        order.removeAll { $0 == sourceID }
-        guard let targetIdx = order.firstIndex(of: targetID) else {
-            order.append(sourceID)
-            persistPolicyOrder(order); return
-        }
-        order.insert(sourceID, at: before ? targetIdx : targetIdx + 1)
-        persistPolicyOrder(order)
-    }
-
     func resetPolicyOrder() {
         policyOrder = []
-        policyOrderRaw = ""
-        objectWillChange.send()
+        UserDefaults.standard.set("", forKey: Self.kPolicyOrder)
     }
 
     /// Replace the entire policy ordering. Useful for List.onMove handlers
@@ -188,8 +180,7 @@ final class OnCallStore: ObservableObject {
 
     private func persistPolicyOrder(_ order: [String]) {
         policyOrder = order
-        policyOrderRaw = order.joined(separator: "\n")
-        objectWillChange.send()
+        UserDefaults.standard.set(order.joined(separator: "\n"), forKey: Self.kPolicyOrder)
     }
 
     // MARK: - Menu bar pins
@@ -197,19 +188,19 @@ final class OnCallStore: ObservableObject {
     func isPinned(key: String) -> Bool { pinnedKeys.contains(key) }
 
     func setPinned(key: String, pinned: Bool) {
+        var next = pinnedKeys
         if pinned {
-            if !pinnedKeys.contains(key) { pinnedKeys.append(key) }
+            if !next.contains(key) { next.append(key) }
         } else {
-            pinnedKeys.removeAll { $0 == key }
+            next.removeAll { $0 == key }
         }
-        pinnedKeysRaw = pinnedKeys.joined(separator: "\n")
-        objectWillChange.send()
+        pinnedKeys = next
+        UserDefaults.standard.set(next.joined(separator: "\n"), forKey: Self.kPinnedKeys)
     }
 
     func resetPinned() {
         pinnedKeys = []
-        pinnedKeysRaw = ""
-        objectWillChange.send()
+        UserDefaults.standard.set("", forKey: Self.kPinnedKeys)
     }
 
     /// Pinned assignments resolved against the latest data, in the user's pin order.
