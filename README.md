@@ -8,10 +8,11 @@ See who's on call, when *you're* on next, and react to incidents — all
 without opening a browser tab.
 
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000?style=flat-square&logo=apple)](https://www.apple.com/macos/)
-[![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
+[![Swift 5.0](https://img.shields.io/badge/Swift-5.0-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-1572B6?style=flat-square&logo=swift&logoColor=white)](https://developer.apple.com/xcode/swiftui/)
-[![CI](https://img.shields.io/github/actions/workflow/status/mattdholloway/pagerduty-menubar/ci.yml?branch=main&style=flat-square)](https://github.com/mattdholloway/pagerduty-menubar/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/mattdholloway/pagerduty-menubar/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/mattdholloway/pagerduty-menubar/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/mattdholloway/pagerduty-menubar?style=flat-square&include_prereleases&sort=semver)](https://github.com/mattdholloway/pagerduty-menubar/releases/latest)
+[![License](https://img.shields.io/github/license/mattdholloway/pagerduty-menubar?style=flat-square)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/mattdholloway/pagerduty-menubar?style=flat-square)](https://github.com/mattdholloway/pagerduty-menubar/stargazers)
 
 </div>
