@@ -77,6 +77,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the changelog can diff to the previous tag
 
       - name: Resolve version
         id: vers
@@ -90,6 +92,32 @@ jobs:
           fi
           echo "version=$TAG_VER" >> "$GITHUB_OUTPUT"
           echo "Building version $TAG_VER"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="v${{ steps.vers.outputs.version }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          {
+            echo "## What's changed"
+            echo
+            if [[ -n "$PREV_TAG" ]]; then
+              echo "Commits since [\`$PREV_TAG\`](https://github.com/${GITHUB_REPOSITORY}/releases/tag/$PREV_TAG):"
+              echo
+              git log --no-merges --pretty=format:"- %s ([\`%h\`](https://github.com/${GITHUB_REPOSITORY}/commit/%H))" "$PREV_TAG..$TAG"
+            else
+              echo "Initial release. All commits:"
+              echo
+              git log --no-merges --pretty=format:"- %s ([\`%h\`](https://github.com/${GITHUB_REPOSITORY}/commit/%H))" "$TAG"
+            fi
+            echo
+            echo
+            if [[ -n "$PREV_TAG" ]]; then
+              echo "**Full diff:** https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${TAG}"
+            fi
+          } > release-notes.md
+          echo "Generated release-notes.md ($(wc -l < release-notes.md) lines):"
+          sed -n '1,40p' release-notes.md
 
       - name: Build
         run: |
@@ -124,7 +152,7 @@ jobs:
           files: |
             ${{ steps.pkg.outputs.zip }}
             ${{ steps.dmg.outputs.dmg }}
-          generate_release_notes: true
+          body_path: release-notes.md
           draft: false
           prerelease: ${{ contains(steps.vers.outputs.version, '-') }}
 
