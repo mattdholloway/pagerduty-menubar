@@ -1,0 +1,66 @@
+# Swift / Xcode — based on github/gitignore Swift + Objective-C templates
+
+## Build generated
+build/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## Various settings
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+## Obj-C/Swift specific
+*.moved-aside
+
+## Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+## CocoaPods (not in use; ignore anyway)
+Pods/
+
+## Carthage (not in use; ignore anyway)
+Carthage/Build/
+
+## fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+## macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+## Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+## Local secrets / sandbox
+.env
+.env.*
+*.entitlements.local
