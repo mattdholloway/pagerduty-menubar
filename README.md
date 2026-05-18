@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logo.svg" width="128" height="128" alt="pagerduty-menubar logo">
+<img src="docs/logo.svg" width="128" height="128" alt="PagerDuty Menu Bar logo">
 
 # PagerDuty Menu Bar
 
