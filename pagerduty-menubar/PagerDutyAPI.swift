@@ -28,6 +28,23 @@ struct PDService: Codable, Hashable, Identifiable {
     let teams: [PDReference]?
 }
 
+struct PDIncident: Codable, Hashable, Identifiable {
+    let id: String
+    let incident_number: Int?
+    let title: String
+    let status: String      // triggered, acknowledged, resolved
+    let urgency: String     // high, low
+    let created_at: Date?
+    let service: PDReference?
+    let assignments: [PDAssignment]?
+    let html_url: String?
+}
+
+struct PDAssignment: Codable, Hashable {
+    let at: Date?
+    let assignee: PDReference
+}
+
 struct PDOnCall: Codable, Hashable {
     let escalation_policy: PDReference
     let escalation_level: Int
@@ -55,6 +72,16 @@ private struct OnCallsEnvelope: Decodable {
     let oncalls: [PDOnCall]
     let more: Bool?
     let offset: Int?
+}
+
+private struct IncidentsEnvelope: Decodable {
+    let incidents: [PDIncident]
+    let more: Bool?
+    let offset: Int?
+}
+
+private struct IncidentUpdateEnvelope: Decodable {
+    let incident: PDIncident
 }
 
 // MARK: - Errors
@@ -187,6 +214,50 @@ actor PagerDutyAPI {
         return all
     }
 
+    // MARK: - Incidents
+
+    /// Active (triggered + acknowledged) incidents for a set of service or user
+    /// scopes. Both filters can be combined; PagerDuty AND's them per request,
+    /// so the caller is responsible for issuing separate calls + deduping if
+    /// they want a union.
+    func incidents(
+        token: String,
+        userIDs: [String] = [],
+        serviceIDs: [String] = [],
+        statuses: [String] = ["triggered", "acknowledged"]
+    ) async throws -> [PDIncident] {
+        var all: [PDIncident] = []
+        var offset = 0
+        let limit = 100
+        while true {
+            var items: [URLQueryItem] = [
+                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: "offset", value: String(offset)),
+                URLQueryItem(name: "sort_by", value: "created_at:desc"),
+            ]
+            items.append(contentsOf: statuses.map { URLQueryItem(name: "statuses[]", value: $0) })
+            items.append(contentsOf: userIDs.map { URLQueryItem(name: "user_ids[]", value: $0) })
+            items.append(contentsOf: serviceIDs.map { URLQueryItem(name: "service_ids[]", value: $0) })
+            let url = base.appending(path: "/incidents").appending(queryItems: items)
+            let env: IncidentsEnvelope = try await get(url: url, token: token)
+            all.append(contentsOf: env.incidents)
+            if env.more == true { offset += limit } else { break }
+            if offset > 1000 { break }
+        }
+        return all
+    }
+
+    /// Mutate a single incident. PagerDuty requires the `From` header to be
+    /// the user's email when issuing status changes from a user-token client.
+    @discardableResult
+    func updateIncident(token: String, id: String, status: String, from email: String) async throws -> PDIncident {
+        let url = base.appending(path: "/incidents/\(id)")
+        let payload: [String: Any] = ["incident": ["type": "incident_reference", "status": status]]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let env: IncidentUpdateEnvelope = try await put(url: url, token: token, from: email, body: body)
+        return env.incident
+    }
+
     // MARK: - Internal
 
     private func get<T: Decodable>(url: URL, token: String) async throws -> T {
@@ -194,6 +265,37 @@ actor PagerDutyAPI {
         req.httpMethod = "GET"
         req.setValue("application/vnd.pagerduty+json;version=2", forHTTPHeaderField: "Accept")
         req.setValue("Token token=\(token)", forHTTPHeaderField: "Authorization")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req)
+        } catch {
+            throw PDError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw PDError.transport("Non-HTTP response")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            let snippet = body.count > 200 ? String(body.prefix(200)) + "…" : body
+            throw PDError.http(http.statusCode, snippet)
+        }
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw PDError.decoding(String(describing: error))
+        }
+    }
+
+    private func put<T: Decodable>(url: URL, token: String, from email: String, body: Data) async throws -> T {
+        var req = URLRequest(url: url)
+        req.httpMethod = "PUT"
+        req.setValue("application/vnd.pagerduty+json;version=2", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Token token=\(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(email, forHTTPHeaderField: "From")
+        req.httpBody = body
 
         let data: Data
         let response: URLResponse

@@ -167,3 +167,74 @@ final class PagerDutyAPITests: XCTestCase {
         }
     }
 }
+
+// MARK: - Incidents
+
+extension PagerDutyAPITests {
+
+    func test_incidents_encodesStatuses_andServiceIDs_andPaginates() async throws {
+        // Two pages.
+        let page1: [String: Any] = [
+            "incidents": (0..<100).map { i -> [String: Any] in
+                [
+                    "id": "I\(i)",
+                    "incident_number": 1000 + i,
+                    "title": "Incident \(i)",
+                    "status": i % 2 == 0 ? "triggered" : "acknowledged",
+                    "urgency": "high",
+                    "created_at": "2026-05-18T12:00:00Z",
+                    "service": ["id": "S1", "summary": "Web", "type": "service_reference"],
+                    "assignments": [["at": "2026-05-18T12:00:00Z", "assignee": ["id":"U1","summary":"Alice","type":"user_reference"]]],
+                    "html_url": "https://example/I\(i)"
+                ]
+            },
+            "more": true,
+        ]
+        let page2: [String: Any] = ["incidents": [], "more": false]
+        StubURLProtocol.register(
+            { $0.path == "/incidents" && ($0.queryItems?.first { $0.name == "offset" }?.value ?? "") == "0" },
+            response: .init(body: try! JSONSerialization.data(withJSONObject: page1))
+        )
+        StubURLProtocol.register(
+            { $0.path == "/incidents" && ($0.queryItems?.first { $0.name == "offset" }?.value ?? "") == "100" },
+            response: .init(body: try! JSONSerialization.data(withJSONObject: page2))
+        )
+        let api = PagerDutyAPI(session: .stubbed())
+        let list = try await api.incidents(token: "t", serviceIDs: ["S1"], statuses: ["triggered", "acknowledged"])
+        XCTAssertEqual(list.count, 100)
+        XCTAssertEqual(list.first?.id, "I0")
+
+        // Verify the encoded query items on the first request.
+        let url = StubURLProtocol.capturedURLs().first!
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        let statuses = (comps.queryItems ?? []).filter { $0.name == "statuses[]" }.map(\.value)
+        XCTAssertEqual(Set(statuses.compactMap { $0 }), Set(["triggered", "acknowledged"]))
+        XCTAssertTrue((comps.queryItems ?? []).contains { $0.name == "service_ids[]" && $0.value == "S1" })
+        XCTAssertTrue((comps.queryItems ?? []).contains { $0.name == "sort_by" && $0.value == "created_at:desc" })
+    }
+
+    func test_updateIncident_sendsFromHeader_andStatusPayload() async throws {
+        let respJSON: [String: Any] = [
+            "incident": [
+                "id": "I42",
+                "incident_number": 42,
+                "title": "Test",
+                "status": "acknowledged",
+                "urgency": "high"
+            ]
+        ]
+        StubURLProtocol.register(
+            { $0.path == "/incidents/I42" },
+            response: .init(body: try! JSONSerialization.data(withJSONObject: respJSON))
+        )
+        let api = PagerDutyAPI(session: .stubbed())
+        let updated = try await api.updateIncident(token: "t", id: "I42", status: "acknowledged", from: "alice@example.com")
+        XCTAssertEqual(updated.id, "I42")
+        XCTAssertEqual(updated.status, "acknowledged")
+
+        let req = StubURLProtocol.capturedHeaders().first ?? [:]
+        XCTAssertEqual(req["From"], "alice@example.com")
+        XCTAssertEqual(req["Content-Type"], "application/json")
+        XCTAssertEqual(req["Accept"], "application/vnd.pagerduty+json;version=2")
+    }
+}

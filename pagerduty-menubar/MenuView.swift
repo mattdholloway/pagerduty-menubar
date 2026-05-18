@@ -16,6 +16,16 @@ struct MenuView: View {
             Divider()
             footer
         }
+        .task {
+            // While the popover is visible, refresh incidents every 60s for
+            // near-realtime updates. Cancelled automatically when the view
+            // disappears (i.e. the popover closes).
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                if Task.isCancelled { break }
+                await store.refreshIncidents()
+            }
+        }
     }
 
     // MARK: - Header
@@ -111,6 +121,10 @@ struct MenuView: View {
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        incidentErrorBanner
+                        incidentUndoStrip
+                        myIncidentsSection
+                        otherIncidentsSection
                         myUpcomingSection
                         myOnCallSection
                         allGroupsSection
@@ -120,7 +134,7 @@ struct MenuView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 }
-                .frame(minHeight: 420, maxHeight: 820)
+                .frame(minHeight: 460, maxHeight: 840)
             }
         }
     }
@@ -195,6 +209,115 @@ struct MenuView: View {
         let end = Calendar.current.date(byAdding: .day, value: OnCallStore.lookaheadDays, to: Date()) ?? Date()
         let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none
         return f.string(from: end)
+    }
+
+    // MARK: - Incidents
+
+    @ViewBuilder
+    private var incidentErrorBanner: some View {
+        if let err = store.incidentMutationError {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text(err)
+                    .font(.system(size: 11))
+                    .lineLimit(2)
+                Spacer()
+                Button("Dismiss") { store.dismissIncidentError() }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11))
+            }
+            .padding(8)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    @ViewBuilder
+    private var incidentUndoStrip: some View {
+        if let undo = store.recentIncidentAction {
+            HStack(spacing: 8) {
+                Image(systemName: undo.newStatus == "resolved" ? "checkmark.seal.fill" : "bell.badge")
+                    .foregroundStyle(undo.newStatus == "resolved" ? .green : .blue)
+                Text("\(undo.newStatus.capitalized) “\(undo.title)”")
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+                Spacer()
+                Button("Undo") { store.undoLastIncidentAction() }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .padding(8)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            .task(id: undo.incidentID) {
+                try? await Task.sleep(nanoseconds: 5_500_000_000)
+                store.dismissUndoIfExpired()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var myIncidentsSection: some View {
+        let mine = filteredIncidents(store.myActiveIncidents)
+        if !mine.isEmpty {
+            sectionHeader(symbol: "exclamationmark.bubble", title: "My active incidents", count: mine.count, tint: .red)
+            VStack(spacing: 4) {
+                ForEach(mine) { inc in IncidentRow(incident: inc, isMine: true) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var otherIncidentsSection: some View {
+        let all = store.otherActiveIncidents
+        if all.isEmpty { EmptyView() } else {
+            let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let matches = q.isEmpty ? [] : all.filter { inc in
+                inc.title.lowercased().contains(q) ||
+                (inc.service?.summary ?? "").lowercased().contains(q) ||
+                (inc.assignments?.contains { ($0.assignee.summary ?? "").lowercased().contains(q) } ?? false)
+            }
+            let count = q.isEmpty ? all.count : matches.count
+            sectionHeader(symbol: "tray", title: "Other active incidents", count: count, tint: .secondary)
+            if q.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                    Text("Type above to search \(all.count) other active incident\(all.count == 1 ? "" : "s") on this PagerDuty account.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 10)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            } else if matches.isEmpty {
+                Text("No other incidents match “\(search)”")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(matches.prefix(20)) { inc in IncidentRow(incident: inc, isMine: false) }
+                    if matches.count > 20 {
+                        Text("Showing 20 of \(matches.count) — refine the search.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    }
+                }
+            }
+        }
+    }
+
+    private func filteredIncidents(_ input: [PDIncident]) -> [PDIncident] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return input }
+        return input.filter { inc in
+            inc.title.lowercased().contains(q) ||
+            (inc.service?.summary ?? "").lowercased().contains(q)
+        }
     }
 
     private func filteredShifts(_ input: [MyShift]) -> [MyShift] {
@@ -1038,5 +1161,110 @@ private struct OtherPolicyRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+private struct IncidentRow: View {
+    let incident: PDIncident
+    let isMine: Bool
+
+    @EnvironmentObject private var store: OnCallStore
+    @Environment(\.openURL) private var openURL
+    @State private var hovering = false
+
+    private var isPending: Bool { store.pendingIncidentIDs.contains(incident.id) }
+    private var assigneeLabel: String? { incident.assignments?.first?.assignee.summary }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(urgencyTint.opacity(0.18))
+                    .frame(width: 22, height: 22)
+                Image(systemName: incident.status == "acknowledged" ? "bell.badge" : "bell.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(urgencyTint)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(incident.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                    UrgencyBadge(urgency: incident.urgency, status: incident.status)
+                }
+                HStack(spacing: 4) {
+                    if let svc = incident.service?.summary {
+                        Text(svc).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    if let assignee = assigneeLabel {
+                        Text("· \(assignee)").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    if let created = incident.created_at {
+                        Text("· \(Self.relative.localizedString(for: created, relativeTo: Date()))")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Spacer(minLength: 4)
+            if isPending {
+                ProgressView().controlSize(.small)
+            } else if isMine, hovering || incident.status == "acknowledged" {
+                if incident.status == "triggered" {
+                    Button("Ack") { store.updateIncidentStatus(incident.id, to: "acknowledged") }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .help("Acknowledge")
+                }
+                Button("Resolve") { store.updateIncidentStatus(incident.id, to: "resolved") }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .tint(.green)
+                    .help("Resolve")
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isMine ? Color.red.opacity(0.06) : Color.primary.opacity(0.03))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isMine ? Color.red.opacity(0.25) : Color.clear, lineWidth: 1)
+                )
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            if let s = incident.html_url, let u = URL(string: s) { openURL(u) }
+        }
+    }
+
+    private var urgencyTint: Color {
+        incident.urgency == "high" ? .red : .blue
+    }
+
+    private static let relative: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+}
+
+private struct UrgencyBadge: View {
+    let urgency: String
+    let status: String
+
+    var body: some View {
+        let (label, tint) = render
+        Text(label)
+            .font(.system(size: 9, weight: .bold))
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .background(tint.opacity(0.18), in: Capsule())
+            .foregroundStyle(tint)
+    }
+
+    private var render: (String, Color) {
+        if status == "acknowledged" { return ("ACK", .blue) }
+        return urgency == "high" ? ("HIGH", .red) : ("LOW", .secondary)
     }
 }

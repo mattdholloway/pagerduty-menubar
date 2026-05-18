@@ -64,6 +64,14 @@ struct MyShift: Identifiable, Hashable {
     var id: String { "\(policyID)-\(level)-\(schedule?.id ?? "direct")-\(start?.timeIntervalSince1970 ?? 0)" }
 }
 
+struct IncidentUndo: Equatable {
+    let incidentID: String
+    let title: String
+    let previousStatus: String
+    let newStatus: String
+    let expiresAt: Date
+}
+
 // MARK: - Store
 
 @MainActor
@@ -73,6 +81,10 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var groups: [EscalationPolicyGroup] = []
     @Published private(set) var state: LoadState = .idle
     @Published var hasToken: Bool = false
+    @Published private(set) var activeIncidents: [PDIncident] = []
+    @Published private(set) var incidentMutationError: String?
+    @Published private(set) var pendingIncidentIDs: Set<String> = []   // optimistic in-flight
+    @Published var recentIncidentAction: IncidentUndo?                  // for the undo strip
 
     // Settings (refresh interval keeps using @AppStorage — it's a simple Int)
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
@@ -420,8 +432,10 @@ final class OnCallStore: ObservableObject {
             // Fan out independent requests in parallel.
             async let servicesTask = api.services(token: token, teamIDs: teamIDs)
             async let allPoliciesTask = api.allEscalationPolicies(token: token)
+            async let incidentsTask = api.incidents(token: token)
             let services = try await servicesTask
             let allPolicies = try await allPoliciesTask
+            let incidents = try await incidentsTask
 
             let myEPIDs = Set(services.compactMap { $0.escalation_policy?.id })
             let allEPIDs = Set(allPolicies.map(\.id)).union(myEPIDs)
@@ -448,10 +462,135 @@ final class OnCallStore: ObservableObject {
             self.upcomingByKey = byKey
             self.upcomingByPolicy = upByPolicy
             self.currentByPolicy = curByPolicy
+            self.activeIncidents = Self.sortIncidents(incidents)
             self.state = .loaded(Date())
+
+            // Phase 3: post macOS notifications for any newly-triggered
+            // incidents assigned to me.
+            NotificationsCoordinator.shared.diffAndNotify(
+                incidents: self.activeIncidents,
+                myUserID: me.id
+            )
         } catch {
             self.state = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
+    }
+
+    /// Faster, incidents-only refresh used by the popover so the inbox
+    /// reflects new pages within a minute while the user is looking.
+    func refreshIncidents() async {
+        guard let token = KeychainStore.loadToken(), let myID = self.me?.id else { return }
+        do {
+            let incidents = try await api.incidents(token: token)
+            self.activeIncidents = Self.sortIncidents(incidents)
+            NotificationsCoordinator.shared.diffAndNotify(incidents: self.activeIncidents, myUserID: myID)
+        } catch {
+            // Stay silent on transient incident refresh failures — the next
+            // full refresh tick will retry. We don't clobber `state`.
+        }
+    }
+
+    private static func sortIncidents(_ list: [PDIncident]) -> [PDIncident] {
+        list.sorted {
+            // High urgency first, then most recent first.
+            if $0.urgency != $1.urgency { return $0.urgency == "high" }
+            return ($0.created_at ?? .distantPast) > ($1.created_at ?? .distantPast)
+        }
+    }
+
+    // MARK: - Incidents: my vs other
+
+    func isMyIncident(_ inc: PDIncident) -> Bool {
+        guard let me else { return false }
+        if inc.assignments?.contains(where: { $0.assignee.id == me.id }) == true { return true }
+        if let sid = inc.service?.id, let myServiceIDs = self.myServiceIDs, myServiceIDs.contains(sid) { return true }
+        return false
+    }
+
+    private var myServiceIDs: Set<String>? {
+        let ids = Set(groups.filter { myPolicyIDs.contains($0.id) }.flatMap { $0.services.map(\.id) })
+        return ids.isEmpty ? nil : ids
+    }
+
+    var myActiveIncidents: [PDIncident] { activeIncidents.filter { isMyIncident($0) } }
+    var otherActiveIncidents: [PDIncident] { activeIncidents.filter { !isMyIncident($0) } }
+
+    // MARK: - Incidents: mutations
+
+    /// Optimistically mark an incident as acknowledged/resolved and start an
+    /// undo window. Reverts on API failure.
+    func updateIncidentStatus(_ id: String, to newStatus: String) {
+        guard let token = KeychainStore.loadToken(), let me else {
+            incidentMutationError = "Need an API token + user email to update incidents."
+            return
+        }
+        guard let email = me.email else {
+            incidentMutationError = "Your PagerDuty user has no email on file; can't mutate incidents."
+            return
+        }
+        guard let idx = activeIncidents.firstIndex(where: { $0.id == id }) else { return }
+        let original = activeIncidents[idx]
+        pendingIncidentIDs.insert(id)
+
+        // Optimistic update.
+        var optimistic = original
+        optimistic = PDIncident(
+            id: original.id, incident_number: original.incident_number,
+            title: original.title, status: newStatus, urgency: original.urgency,
+            created_at: original.created_at, service: original.service,
+            assignments: original.assignments, html_url: original.html_url
+        )
+        if newStatus == "resolved" {
+            // Resolved drops out of the active list immediately.
+            activeIncidents.remove(at: idx)
+        } else {
+            activeIncidents[idx] = optimistic
+        }
+        recentIncidentAction = IncidentUndo(
+            incidentID: id, title: original.title,
+            previousStatus: original.status, newStatus: newStatus,
+            expiresAt: Date().addingTimeInterval(5)
+        )
+
+        Task { [weak self] in
+            do {
+                _ = try await self?.api.updateIncident(token: token, id: id, status: newStatus, from: email)
+                await MainActor.run { self?.pendingIncidentIDs.remove(id) }
+            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.pendingIncidentIDs.remove(id)
+                    self.incidentMutationError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    // Revert optimistic mutation.
+                    if newStatus == "resolved" {
+                        self.activeIncidents.insert(original, at: min(idx, self.activeIncidents.count))
+                    } else {
+                        if let i = self.activeIncidents.firstIndex(where: { $0.id == id }) {
+                            self.activeIncidents[i] = original
+                        }
+                    }
+                    self.recentIncidentAction = nil
+                }
+            }
+        }
+    }
+
+    func undoLastIncidentAction() {
+        guard let undo = recentIncidentAction else { return }
+        recentIncidentAction = nil
+        updateIncidentStatus(undo.incidentID, to: undo.previousStatus)
+    }
+
+    func dismissIncidentError() { incidentMutationError = nil }
+
+    func dismissUndoIfExpired() {
+        if let u = recentIncidentAction, u.expiresAt < Date() { recentIncidentAction = nil }
+    }
+
+    /// Test seam: inject a raw incident list and apply the production sort.
+    /// Marked internal so @testable import can reach it.
+    func _setActiveIncidentsForTesting(_ raw: [PDIncident]) {
+        activeIncidents = Self.sortIncidents(raw)
     }
 
     static func upcomingKey(for oncall: PDOnCall) -> String {

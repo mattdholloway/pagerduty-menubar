@@ -256,3 +256,72 @@ final class OnCallStoreTests: XCTestCase {
         XCTAssertEqual(store.menuBarTitle, "Alice · Bob")
     }
 }
+
+// MARK: - Incidents
+
+extension OnCallStoreTests {
+
+    private func inc(id: String, status: String = "triggered", urgency: String = "high",
+                     created: Date? = nil, serviceID: String? = nil, assigneeIDs: [String] = []) -> PDIncident {
+        let assigns = assigneeIDs.map { uid in
+            PDAssignment(at: nil, assignee: PDReference(id: uid, summary: "User \(uid)", html_url: nil, type: nil))
+        }
+        let svc = serviceID.map { PDReference(id: $0, summary: "Svc \($0)", html_url: nil, type: nil) }
+        return PDIncident(
+            id: id, incident_number: 1,
+            title: "Inc \(id)", status: status, urgency: urgency,
+            created_at: created, service: svc, assignments: assigns, html_url: nil
+        )
+    }
+
+    func test_isMyIncident_trueWhenAssignedToMe() {
+        let me = PDUser(id: "ME", name: "Me", email: "me@x", html_url: nil, avatar_url: nil, time_zone: nil, teams: nil)
+        let store = OnCallStore(testMe: me)
+        XCTAssertTrue(store.isMyIncident(inc(id: "I1", assigneeIDs: ["ME"])))
+        XCTAssertFalse(store.isMyIncident(inc(id: "I2", assigneeIDs: ["U1"])))
+    }
+
+    func test_isMyIncident_trueWhenServiceIsInMyPolicies() {
+        let me = PDUser(id: "ME", name: "Me", email: "me@x", html_url: nil, avatar_url: nil, time_zone: nil, teams: nil)
+        let svc = PDService(id: "S1", name: "Web", html_url: nil, status: nil,
+                            escalation_policy: PDReference(id: "EP1", summary: "EP", html_url: nil, type: nil),
+                            teams: nil)
+        let group = EscalationPolicyGroup(
+            policy: PDReference(id: "EP1", summary: "EP", html_url: nil, type: nil),
+            services: [svc],
+            levels: []
+        )
+        let store = OnCallStore(
+            testMe: me,
+            testGroups: [group],
+            testMyPolicyIDs: ["EP1"]
+        )
+        XCTAssertTrue(store.isMyIncident(inc(id: "I1", serviceID: "S1", assigneeIDs: [])))
+        XCTAssertFalse(store.isMyIncident(inc(id: "I2", serviceID: "OTHER", assigneeIDs: [])))
+    }
+
+    func test_sortIncidents_highUrgencyFirstThenNewestFirst() {
+        // Indirectly verify via the public surface: feed a mix into the store
+        // (using the internal accessor for testing) and ensure ordering.
+        // Since sortIncidents is private, exercise it through the store load
+        // path via a small helper that mimics what performRefresh sets.
+        let now = Date()
+        let lowOld = inc(id: "A", status: "triggered", urgency: "low", created: now.addingTimeInterval(-3600))
+        let highNew = inc(id: "B", status: "triggered", urgency: "high", created: now)
+        let highOld = inc(id: "C", status: "triggered", urgency: "high", created: now.addingTimeInterval(-7200))
+        let lowNew = inc(id: "D", status: "triggered", urgency: "low", created: now.addingTimeInterval(-60))
+        let store = OnCallStore()
+        // Use the test seam path to inject ordering directly via the array
+        // setter. We expose a tiny visibility window for this test.
+        OnCallStoreTestSupport.injectActiveIncidents(into: store, raw: [lowOld, highNew, highOld, lowNew])
+        XCTAssertEqual(store.activeIncidents.map(\.id), ["B", "C", "D", "A"])
+    }
+}
+
+/// Test-only access for properties we don't want to publicly expose as
+/// settable.
+enum OnCallStoreTestSupport {
+    @MainActor static func injectActiveIncidents(into store: OnCallStore, raw: [PDIncident]) {
+        store._setActiveIncidentsForTesting(raw)
+    }
+}
