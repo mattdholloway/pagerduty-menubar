@@ -10,7 +10,7 @@ without opening a browser tab.
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000?style=flat-square&logo=apple)](https://www.apple.com/macos/)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-1572B6?style=flat-square&logo=swift&logoColor=white)](https://developer.apple.com/xcode/swiftui/)
-[![Build](https://img.shields.io/github/actions/workflow/status/mattdholloway/pagerduty-menubar/build.yml?branch=main&style=flat-square)](https://github.com/mattdholloway/pagerduty-menubar/actions/workflows/build.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/mattdholloway/pagerduty-menubar/ci.yml?branch=main&style=flat-square)](https://github.com/mattdholloway/pagerduty-menubar/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/mattdholloway/pagerduty-menubar?style=flat-square)](https://github.com/mattdholloway/pagerduty-menubar/stargazers)
 

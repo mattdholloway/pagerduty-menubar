@@ -1,4 +1,4 @@
-name: Build
+name: CI
 
 on:
   push:
@@ -12,29 +12,11 @@ permissions:
   contents: write  # needed to create Releases on tag pushes
 
 jobs:
-  build:
+  test:
+    name: test
     runs-on: macos-15
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Resolve version
-        id: vers
-        run: |
-          PROJECT_MV=$(xcodebuild -project pagerduty-menubar.xcodeproj -scheme pagerduty-menubar -showBuildSettings -configuration Release \
-            | awk '/^[[:space:]]*MARKETING_VERSION/ {print $3; exit}')
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG_VER="${GITHUB_REF#refs/tags/v}"
-            if [[ "$TAG_VER" != "$PROJECT_MV" ]]; then
-              echo "::error::tag v$TAG_VER does not match project MARKETING_VERSION $PROJECT_MV. Did you forget to run bin/release?"
-              exit 1
-            fi
-            VERSION="$TAG_VER"
-          else
-            VERSION="${PROJECT_MV}+$(git rev-parse --short HEAD)"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building version $VERSION"
 
       - name: Run tests
         run: |
@@ -46,6 +28,28 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             test
+
+  release:
+    name: release
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: vers
+        run: |
+          PROJECT_MV=$(xcodebuild -project pagerduty-menubar.xcodeproj -scheme pagerduty-menubar -showBuildSettings -configuration Release \
+            | awk '/^[[:space:]]*MARKETING_VERSION/ {print $3; exit}')
+          TAG_VER="${GITHUB_REF#refs/tags/v}"
+          if [[ "$TAG_VER" != "$PROJECT_MV" ]]; then
+            echo "::error::tag v$TAG_VER does not match project MARKETING_VERSION $PROJECT_MV. Did you forget to run bin/release?"
+            exit 1
+          fi
+          echo "version=$TAG_VER" >> "$GITHUB_OUTPUT"
+          echo "Building version $TAG_VER"
 
       - name: Build
         run: |
@@ -74,16 +78,7 @@ jobs:
           bin/make-dmg build/Build/Products/Release/pagerduty-menubar.app "$DMG" "pagerduty-menubar ${{ steps.vers.outputs.version }}"
           echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pagerduty-menubar-${{ steps.vers.outputs.version }}
-          path: |
-            ${{ steps.pkg.outputs.zip }}
-            ${{ steps.dmg.outputs.dmg }}
-          retention-days: 14
-
-      - name: Create GitHub Release (tag pushes only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -92,4 +87,5 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(steps.vers.outputs.version, '-') }}
+
 
