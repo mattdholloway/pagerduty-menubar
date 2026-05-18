@@ -7,7 +7,6 @@ struct MenuView: View {
     @Environment(\.openSettings) private var openSettings
 
     @State private var search: String = ""
-    @State private var expandedPolicies: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -155,14 +154,8 @@ struct MenuView: View {
         if !mine.isEmpty {
             sectionHeader(symbol: "bell.fill", title: "You're on call", count: mine.count, tint: .orange)
             ForEach(mine) { group in
-                PolicyCard(
-                    group: group,
-                    meID: store.me?.id,
-                    expanded: expandedPolicies.contains(group.id),
-                    onToggle: { toggleExpanded(group.id) },
-                    reorderable: false
-                )
-                .environmentObject(store)
+                PolicyCard(group: group, meID: store.me?.id, reorderable: false)
+                    .environmentObject(store)
             }
         }
     }
@@ -178,14 +171,8 @@ struct MenuView: View {
                 tint: .secondary
             )
             ForEach(all) { group in
-                PolicyCard(
-                    group: group,
-                    meID: store.me?.id,
-                    expanded: expandedPolicies.contains(group.id),
-                    onToggle: { toggleExpanded(group.id) },
-                    reorderable: search.isEmpty
-                )
-                .environmentObject(store)
+                PolicyCard(group: group, meID: store.me?.id, reorderable: search.isEmpty)
+                    .environmentObject(store)
             }
         } else if !search.isEmpty {
             Text("No matches for “\(search)”")
@@ -232,11 +219,6 @@ struct MenuView: View {
                 .background(Color.secondary.opacity(0.15), in: Capsule())
             Spacer()
         }
-    }
-
-    private func toggleExpanded(_ id: String) {
-        if expandedPolicies.contains(id) { expandedPolicies.remove(id) }
-        else { expandedPolicies.insert(id) }
     }
 
     private func filteredGroups(_ input: [EscalationPolicyGroup]) -> [EscalationPolicyGroup] {
@@ -318,8 +300,6 @@ struct MenuView: View {
 private struct PolicyCard: View {
     let group: EscalationPolicyGroup
     let meID: String?
-    let expanded: Bool
-    let onToggle: () -> Void
     let reorderable: Bool
 
     @EnvironmentObject private var store: OnCallStore
@@ -336,14 +316,6 @@ private struct PolicyCard: View {
                         .frame(width: 12, height: 12)
                         .help("Drag to reorder")
                 }
-                Button(action: onToggle) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 12, height: 12)
-                }
-                .buttonStyle(.borderless)
-
                 Text(group.policy.summary ?? "Escalation policy")
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
@@ -361,7 +333,6 @@ private struct PolicyCard: View {
                 }
             }
 
-            // Services chip row
             if !group.services.isEmpty {
                 FlowLayout(spacing: 4) {
                     ForEach(group.services) { svc in
@@ -370,7 +341,7 @@ private struct PolicyCard: View {
                 }
             }
 
-            // Visible assignments (primary level)
+            // Primary level — full-detail rows
             if let primary = group.primaryLevel {
                 let rows = visibleAssignments(in: primary)
                 if rows.isEmpty {
@@ -393,22 +364,25 @@ private struct PolicyCard: View {
                     .foregroundStyle(.secondary)
             }
 
-            // Expanded escalation chain
-            if expanded, group.levels.count > 1 {
-                Divider().padding(.vertical, 2)
-                ForEach(group.levels.dropFirst()) { lvl in
-                    let rows = visibleAssignments(in: lvl)
-                    if !rows.isEmpty {
+            // Non-primary levels — always shown, compact one-liners
+            let escalation = group.levels.dropFirst()
+                .map { level -> (Int, [OnCallAssignment]) in
+                    (level.level, visibleAssignments(in: level))
+                }
+                .filter { !$0.1.isEmpty }
+            if !escalation.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(escalation, id: \.0) { (lvl, rows) in
                         ForEach(rows) { a in
-                            AssignmentRow(
+                            CompactAssignmentRow(
                                 assignment: a,
-                                level: lvl.level,
-                                isMe: a.user.id == meID,
-                                isPrimary: false
+                                level: lvl,
+                                isMe: a.user.id == meID
                             )
                         }
                     }
                 }
+                .padding(.top, 2)
             }
         }
         .padding(10)
@@ -433,6 +407,93 @@ private struct PolicyCard: View {
     private func visibleAssignments(in level: OnCallLevel) -> [OnCallAssignment] {
         level.assignments.filter { !store.isHidden(scheduleID: $0.hideKey) }
     }
+}
+
+private struct CompactAssignmentRow: View {
+    let assignment: OnCallAssignment
+    let level: Int
+    let isMe: Bool
+
+    @EnvironmentObject private var store: OnCallStore
+    @Environment(\.openURL) private var openURL
+    @State private var hovering = false
+
+    private var isHidden: Bool { store.isHidden(scheduleID: assignment.hideKey) }
+    private var isPinned: Bool { store.isPinned(key: assignment.hideKey) }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoleBadge(level: level, compact: true)
+            Text(assignment.user.summary ?? "Unknown")
+                .font(.system(size: 11))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            if isMe {
+                Text("You")
+                    .font(.system(size: 9, weight: .bold))
+                    .padding(.horizontal, 4).padding(.vertical, 0)
+                    .background(Color.accentColor.opacity(0.2), in: Capsule())
+                    .foregroundStyle(Color.accentColor)
+            }
+            if isPinned {
+                Image(systemName: "menubar.rectangle")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Color.accentColor)
+            }
+            if let sched = assignment.schedule?.summary {
+                Text("· \(sched)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 4)
+
+            // Controls: visible on hover, plus end-time as a small caption when not hovering.
+            if hovering {
+                Button {
+                    store.setPinned(key: assignment.hideKey, pinned: !isPinned)
+                } label: {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 10))
+                        .foregroundStyle(isPinned ? Color.accentColor : .secondary)
+                        .rotationEffect(.degrees(45))
+                }
+                .buttonStyle(.borderless)
+                .help(isPinned ? "Remove from menu bar" : "Show in menu bar")
+
+                Button {
+                    store.setHidden(scheduleID: assignment.hideKey, hidden: !isHidden)
+                } label: {
+                    Image(systemName: isHidden ? "eye.slash" : "eye")
+                        .font(.system(size: 10))
+                        .foregroundStyle(isHidden ? Color.orange : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(isHidden ? "Show" : "Hide")
+            } else if let end = assignment.end {
+                Text(Self.endFormatter.string(from: end))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .help("On call until \(end.formatted(date: .complete, time: .shortened))")
+            }
+        }
+        .padding(.vertical, 1)
+        .opacity(isHidden ? 0.45 : 1)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            if let s = assignment.user.html_url, let u = URL(string: s) { openURL(u) }
+        }
+    }
+
+    private static let endFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .short
+        f.doesRelativeDateFormatting = true
+        return f
+    }()
 }
 
 private struct ReorderModifier: ViewModifier {
@@ -645,13 +706,14 @@ private struct Avatar: View {
 
 private struct RoleBadge: View {
     let level: Int
+    var compact: Bool = false
 
     private var label: String {
         switch level {
-        case 1: return "Primary"
-        case 2: return "Secondary"
-        case 3: return "Tertiary"
-        default: return "Level \(level)"
+        case 1: return compact ? "1°" : "Primary"
+        case 2: return compact ? "2°" : "Secondary"
+        case 3: return compact ? "3°" : "Tertiary"
+        default: return compact ? "L\(level)" : "Level \(level)"
         }
     }
 
@@ -666,8 +728,8 @@ private struct RoleBadge: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: 9, weight: .bold))
-            .padding(.horizontal, 5).padding(.vertical, 1)
+            .font(.system(size: compact ? 9 : 9, weight: .bold))
+            .padding(.horizontal, compact ? 4 : 5).padding(.vertical, compact ? 0 : 1)
             .background(tint.opacity(0.18), in: Capsule())
             .foregroundStyle(tint)
     }
