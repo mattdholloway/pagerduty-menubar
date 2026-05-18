@@ -632,6 +632,8 @@ private struct PolicyCard: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 6) {
                 if reorderable {
+                    let canUp = store.canMovePolicy(group.id, by: -1)
+                    let canDown = store.canMovePolicy(group.id, by: 1)
                     VStack(spacing: 1) {
                         Button {
                             store.nudgePolicy(group.id, by: -1)
@@ -640,9 +642,10 @@ private struct PolicyCard: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .frame(width: 18, height: 12)
                                 .contentShape(Rectangle())
+                                .opacity(canUp ? 1 : 0.25)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!store.canMovePolicy(group.id, by: -1))
+                        .disabled(!canUp)
                         .help("Move up")
 
                         Button {
@@ -652,9 +655,10 @@ private struct PolicyCard: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .frame(width: 18, height: 12)
                                 .contentShape(Rectangle())
+                                .opacity(canDown ? 1 : 0.25)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!store.canMovePolicy(group.id, by: 1))
+                        .disabled(!canDown)
                         .help("Move down")
                     }
                     .foregroundStyle(.secondary)

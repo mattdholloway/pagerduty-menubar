@@ -220,22 +220,39 @@ final class OnCallStore: ObservableObject {
         persistPolicyOrder(order)
     }
 
-    /// Move the policy with `id` one slot up (toward index 0) or down. No-op if at the edge.
+    /// Move the policy with `id` one slot up (toward index 0) or down. The
+    /// movement is computed relative to the user's *visible* "My" list (so
+    /// hidden or out-of-section policies don't make the click appear to do
+    /// nothing). The full underlying `policyOrder` is then rewritten to
+    /// reflect the swap.
     func nudgePolicy(_ id: String, by delta: Int) {
-        var order = orderedGroupsIncludingHidden.map(\.id)
-        guard let idx = order.firstIndex(of: id) else { return }
-        let target = idx + delta
-        guard target >= 0, target < order.count else { return }
-        order.remove(at: idx)
-        order.insert(id, at: target)
-        persistPolicyOrder(order)
+        // Visible "My" ids in current order.
+        let visible = orderedGroups.map(\.id)
+        guard let vIdx = visible.firstIndex(of: id) else { return }
+        let vTarget = vIdx + delta
+        guard vTarget >= 0, vTarget < visible.count else { return }
+        let neighborID = visible[vTarget]
+
+        // Apply the swap to the full ordering so the relative position of
+        // every other (hidden / other) policy is preserved.
+        var full = orderedGroupsIncludingHidden.map(\.id)
+        guard let fromFull = full.firstIndex(of: id),
+              let toFull = full.firstIndex(of: neighborID) else { return }
+        full.remove(at: fromFull)
+        // After removal, the neighbour index may have shifted by one if it
+        // sat after the source.
+        let adjusted = toFull > fromFull ? toFull - 1 : toFull
+        // Moving up = land before neighbour; moving down = land after.
+        let insertAt = delta < 0 ? adjusted : adjusted + 1
+        full.insert(id, at: insertAt)
+        persistPolicyOrder(full)
     }
 
     func canMovePolicy(_ id: String, by delta: Int) -> Bool {
-        let order = orderedGroupsIncludingHidden.map(\.id)
-        guard let idx = order.firstIndex(of: id) else { return false }
+        let visible = orderedGroups.map(\.id)
+        guard let idx = visible.firstIndex(of: id) else { return false }
         let target = idx + delta
-        return target >= 0 && target < order.count
+        return target >= 0 && target < visible.count
     }
 
     private func persistPolicyOrder(_ order: [String]) {
