@@ -114,6 +114,7 @@ struct MenuView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         myOnCallSection
                         allGroupsSection
+                        hiddenSection
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -140,20 +141,6 @@ struct MenuView: View {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
-            }
-            if store.hiddenScheduleCount > 0 {
-                Divider().frame(height: 14)
-                Button {
-                    store.showHidden.toggle()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: store.showHidden ? "eye" : "eye.slash")
-                        Text("\(store.hiddenScheduleCount)")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                }
-                .buttonStyle(.borderless)
-                .help(store.showHidden ? "Hide muted schedules" : "Show \(store.hiddenScheduleCount) hidden schedule\(store.hiddenScheduleCount == 1 ? "" : "s")")
             }
         }
         .padding(.horizontal, 12)
@@ -204,6 +191,31 @@ struct MenuView: View {
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var hiddenSection: some View {
+        let hidden = filteredHidden(store.hiddenAssignments)
+        if !hidden.isEmpty {
+            sectionHeader(symbol: "eye.slash", title: "Hidden", count: hidden.count, tint: .secondary)
+            VStack(spacing: 4) {
+                ForEach(hidden) { h in
+                    HiddenAssignmentRow(item: h)
+                        .environmentObject(store)
+                }
+            }
+        }
+    }
+
+    private func filteredHidden(_ input: [HiddenAssignment]) -> [HiddenAssignment] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return input }
+        return input.filter { h in
+            if (h.policy.summary ?? "").lowercased().contains(q) { return true }
+            if (h.assignment.user.summary ?? "").lowercased().contains(q) { return true }
+            if (h.assignment.schedule?.summary ?? "").lowercased().contains(q) { return true }
+            return false
         }
     }
 
@@ -393,8 +405,52 @@ private struct PolicyCard: View {
     }
 
     private func visibleAssignments(in level: OnCallLevel) -> [OnCallAssignment] {
-        if store.showHidden { return level.assignments }
-        return level.assignments.filter { !store.isHidden(scheduleID: $0.hideKey) }
+        level.assignments.filter { !store.isHidden(scheduleID: $0.hideKey) }
+    }
+}
+
+private struct HiddenAssignmentRow: View {
+    let item: HiddenAssignment
+    @EnvironmentObject private var store: OnCallStore
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "moon.zzz")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(item.assignment.schedule?.summary ?? item.assignment.user.summary ?? "Assignment")
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    RoleBadge(level: item.level)
+                }
+                Text("\(item.policy.summary ?? "Escalation policy") · \(item.assignment.user.summary ?? "Unknown")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                store.setHidden(scheduleID: item.assignment.hideKey, hidden: false)
+            } label: {
+                Image(systemName: "eye")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.borderless)
+            .help("Unhide “\(item.assignment.hideLabel)”")
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .opacity(0.7)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let s = item.assignment.user.html_url, let u = URL(string: s) { openURL(u) }
+        }
     }
 }
 

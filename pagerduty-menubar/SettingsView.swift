@@ -78,8 +78,7 @@ struct SettingsView: View {
                     Button("Reset") { store.resetHiddenSchedules() }
                         .disabled(store.hiddenScheduleCount == 0)
                 }
-                Toggle("Show hidden schedules in menu", isOn: $store.showHidden)
-                Text("Use the eye icon next to any schedule in the menu to hide it. Hidden schedules are remembered between launches.")
+                Text("Use the eye icon next to any schedule in the menu to hide it. Hidden schedules appear greyed-out at the bottom of the menu and are remembered between launches.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

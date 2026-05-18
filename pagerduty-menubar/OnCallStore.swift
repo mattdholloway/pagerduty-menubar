@@ -46,6 +46,13 @@ enum LoadState: Equatable {
     case failed(String)
 }
 
+struct HiddenAssignment: Identifiable, Hashable {
+    let policy: PDReference
+    let level: Int
+    let assignment: OnCallAssignment
+    var id: String { "\(policy.id)-\(assignment.id)" }
+}
+
 // MARK: - Store
 
 @MainActor
@@ -55,7 +62,6 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var groups: [EscalationPolicyGroup] = []
     @Published private(set) var state: LoadState = .idle
     @Published var hasToken: Bool = false
-    @Published var showHidden: Bool = false
 
     // Settings
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
@@ -98,6 +104,20 @@ final class OnCallStore: ObservableObject {
     }
 
     var hiddenScheduleCount: Int { hiddenScheduleIDs.count }
+
+    /// All currently-hidden assignments paired with their parent escalation policy.
+    /// Stale ids (no longer matching any loaded assignment) are simply omitted.
+    var hiddenAssignments: [HiddenAssignment] {
+        var out: [HiddenAssignment] = []
+        for group in groups {
+            for level in group.levels {
+                for a in level.assignments where hiddenScheduleIDs.contains(a.hideKey) {
+                    out.append(HiddenAssignment(policy: group.policy, level: level.level, assignment: a))
+                }
+            }
+        }
+        return out.sorted { ($0.policy.summary ?? "") < ($1.policy.summary ?? "") }
+    }
 
     // MARK: - Derived UI helpers
 
