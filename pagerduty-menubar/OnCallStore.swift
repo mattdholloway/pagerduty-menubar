@@ -4,13 +4,13 @@ import Combine
 
 // MARK: - View-ready models
 
-struct OnCallLevel: Identifiable, Hashable {
+struct OnCallLevel: Identifiable, Hashable, Codable {
     var id: Int { level }
     let level: Int
     let assignments: [OnCallAssignment]
 }
 
-struct OnCallAssignment: Identifiable, Hashable {
+struct OnCallAssignment: Identifiable, Hashable, Codable {
     let user: PDReference
     let schedule: PDReference?
     let end: Date?
@@ -22,7 +22,7 @@ struct OnCallAssignment: Identifiable, Hashable {
     var hideLabel: String { schedule?.summary ?? (user.summary ?? "this assignment") }
 }
 
-struct EscalationPolicyGroup: Identifiable, Hashable {
+struct EscalationPolicyGroup: Identifiable, Hashable, Codable {
     let policy: PDReference
     let services: [PDService]
     let levels: [OnCallLevel]
@@ -119,9 +119,32 @@ final class OnCallStore: ObservableObject {
             .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         self.pinnedKeys = (d.string(forKey: Self.kPinnedKeys) ?? "")
             .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+
+        // Hydrate from cache if we have one. This populates the menu
+        // immediately so the user sees real data without waiting for the
+        // first network round-trip.
+        var cacheAge: TimeInterval = .infinity
+        if let snap = CacheStore.load() {
+            self.me = snap.me
+            self.groups = snap.groups
+            self.myPolicyIDs = snap.myPolicyIDs
+            self.currentByPolicy = snap.currentByPolicy
+            self.upcomingByPolicy = snap.upcomingByPolicy
+            self.upcomingByKey = snap.upcomingByKey
+            self.activeIncidents = snap.activeIncidents
+            self.state = .loaded(snap.savedAt)
+            cacheAge = Date().timeIntervalSince(snap.savedAt)
+        }
+
         if hasToken {
             startTimer()
-            refresh()
+            // Only kick off an immediate refresh if the cached snapshot is
+            // older than the configured interval. Otherwise wait for the
+            // periodic timer to do the next pull.
+            let interval = TimeInterval(max(1, refreshMinutes) * 60)
+            if cacheAge >= interval {
+                refresh()
+            }
         }
     }
 
@@ -411,6 +434,7 @@ final class OnCallStore: ObservableObject {
 
     func clearToken() {
         KeychainStore.deleteToken()
+        CacheStore.clear()
         hasToken = false
         timerTask?.cancel()
         timerTask = nil
@@ -418,6 +442,12 @@ final class OnCallStore: ObservableObject {
         refreshTask = nil
         me = nil
         groups = []
+        activeIncidents = []
+        otherIncidents = []
+        otherIncidentsLoaded = false
+        currentByPolicy = [:]
+        upcomingByPolicy = [:]
+        upcomingByKey = [:]
         state = .idle
     }
 
@@ -500,6 +530,7 @@ final class OnCallStore: ObservableObject {
             self.currentByPolicy = curByPolicy
             self.activeIncidents = Self.sortIncidents(mineIncidents)
             self.state = .loaded(Date())
+            persistCacheSnapshot()
 
             // Phase 3: post macOS notifications for any newly-triggered
             // incidents assigned to me.
@@ -528,6 +559,7 @@ final class OnCallStore: ObservableObject {
             for inc in serviceScoped { byID[inc.id] = inc }
             self.activeIncidents = Self.sortIncidents(Array(byID.values))
             NotificationsCoordinator.shared.diffAndNotify(incidents: self.activeIncidents, myUserID: me.id)
+            persistCacheSnapshot()
         } catch {
             // Stay silent on transient incident refresh failures.
         }
@@ -660,6 +692,19 @@ final class OnCallStore: ObservableObject {
 
     func dismissUndoIfExpired() {
         if let u = recentIncidentAction, u.expiresAt < Date() { recentIncidentAction = nil }
+    }
+
+    private func persistCacheSnapshot() {
+        CacheStore.save(CacheSnapshot(
+            savedAt: Date(),
+            me: me,
+            groups: groups,
+            myPolicyIDs: myPolicyIDs,
+            currentByPolicy: currentByPolicy,
+            upcomingByPolicy: upcomingByPolicy,
+            upcomingByKey: upcomingByKey,
+            activeIncidents: activeIncidents
+        ))
     }
 
     /// Test seam: inject a raw incident list and apply the production sort.
