@@ -17,8 +17,44 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect code changes
+        id: changes
+        # On push, diff against the previous commit. On PRs, GitHub already
+        # provides github.event.before / pull_request.base.sha; the simplest
+        # portable shell uses `git diff --name-only HEAD^ HEAD` for pushes
+        # and the PR base for pull_request events.
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD || true)
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            # First push on a branch has 0000... as before; handle that.
+            BEFORE="${{ github.event.before }}"
+            if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+              CHANGED=$(git ls-tree -r --name-only HEAD)
+            else
+              CHANGED=$(git diff --name-only "$BEFORE" HEAD || git ls-tree -r --name-only HEAD)
+            fi
+          else
+            # workflow_dispatch / tag pushes: always run.
+            CHANGED="FORCE"
+          fi
+          echo "Changed files:"
+          echo "$CHANGED"
+          # Anything outside docs / GitHub metadata triggers a real test run.
+          # Always run if the workflow file itself changed (so CI tweaks
+          # actually get exercised).
+          if echo "$CHANGED" | grep -Ev '^(README\.md|LICENSE|\.gitignore|\.copilot/|docs/|\.github/ISSUE_TEMPLATE/|\.github/PULL_REQUEST_TEMPLATE)' | grep -q .; then
+            echo "needs_tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_tests=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run tests
+        if: steps.changes.outputs.needs_tests == 'true'
         run: |
           xcodebuild \
             -project pagerduty-menubar.xcodeproj \
@@ -28,6 +64,10 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             test
+
+      - name: Skip notice
+        if: steps.changes.outputs.needs_tests != 'true'
+        run: echo "::notice::Only docs / metadata changed — skipped xcodebuild test."
 
   release:
     name: release
