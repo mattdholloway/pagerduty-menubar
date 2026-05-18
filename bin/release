@@ -50,6 +50,7 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+PBXPROJ="pagerduty-menubar.xcodeproj/project.pbxproj"
 
 # Ensure clean working tree (excluding untracked files we don't care about).
 if [[ -n "$(git status --porcelain -uno)" ]]; then
@@ -65,9 +66,10 @@ if [[ "$BRANCH" != "main" && $FORCE -eq 0 ]]; then
   exit 2
 fi
 
-# Pull current MARKETING_VERSION via agvtool (reads project.pbxproj).
-CURRENT_MV="$(agvtool what-marketing-version -terse1 2>/dev/null | head -n1 || true)"
-CURRENT_BUILD="$(agvtool what-version -terse 2>/dev/null | head -n1 || true)"
+# Read current values directly from project.pbxproj. Avoids depending on
+# agvtool (which needs a full Xcode install, not just Command Line Tools).
+CURRENT_MV="$(awk -F'[ =;]+' '/MARKETING_VERSION/ {print $3; exit}' "$PBXPROJ" || true)"
+CURRENT_BUILD="$(awk -F'[ =;]+' '/CURRENT_PROJECT_VERSION/ {print $3; exit}' "$PBXPROJ" || true)"
 CURRENT_BUILD="${CURRENT_BUILD:-0}"
 
 echo "Current: $CURRENT_MV (build $CURRENT_BUILD)"
@@ -97,10 +99,13 @@ if [[ $DRY_RUN -eq 1 ]]; then
   exit 0
 fi
 
-agvtool new-marketing-version "$VERSION" >/dev/null
-agvtool new-version -all "$NEXT_BUILD" >/dev/null
 
-git add pagerduty-menubar.xcodeproj/project.pbxproj
+# In-place rewrite: every MARKETING_VERSION = ...; and CURRENT_PROJECT_VERSION = ...;
+# in project.pbxproj. Both target configs share the same setting lines.
+perl -i -pe "s/(MARKETING_VERSION\s*=\s*)[^;]+;/\${1}${VERSION};/g" "$PBXPROJ"
+perl -i -pe "s/(CURRENT_PROJECT_VERSION\s*=\s*)[^;]+;/\${1}${NEXT_BUILD};/g" "$PBXPROJ"
+
+git add "$PBXPROJ"
 git commit -m "Bump version to $VERSION (build $NEXT_BUILD)"
 
 if [[ $FORCE -eq 1 ]]; then
