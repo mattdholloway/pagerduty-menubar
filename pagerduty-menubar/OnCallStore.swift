@@ -298,6 +298,13 @@ final class OnCallStore: ObservableObject {
         }
     }
 
+    // Calendar / "next" lookahead window in days
+    static let lookaheadDays: Int = 7
+
+    @Published private(set) var upcomingByKey: [String: [PDOnCall]] = [:]
+    @Published private(set) var upcomingByPolicy: [String: [PDOnCall]] = [:]
+    @Published private(set) var currentByPolicy: [String: [PDOnCall]] = [:]
+
     private func performRefresh() async {
         guard let token = KeychainStore.loadToken() else {
             state = .failed("No PagerDuty API token set.")
@@ -310,15 +317,78 @@ final class OnCallStore: ObservableObject {
             let teamIDs = (me.teams ?? []).map { $0.id }
             let services = try await api.services(token: token, teamIDs: teamIDs)
             let policyIDs = Array(Set(services.compactMap { $0.escalation_policy?.id }))
-            let onCalls = try await api.onCalls(token: token, escalationPolicyIDs: policyIDs)
+            let now = Date()
+            let until = Calendar.current.date(byAdding: .day, value: Self.lookaheadDays, to: now) ?? now.addingTimeInterval(7 * 86400)
+            let windowed = try await api.onCalls(token: token, escalationPolicyIDs: policyIDs, since: now, until: until)
 
-            let groups = Self.buildGroups(services: services, onCalls: onCalls)
+            // Current = overlapping "now". Upcoming = starts strictly after now.
+            let current = windowed.filter { oc in
+                (oc.start.map { $0 <= now } ?? true) && (oc.end.map { $0 > now } ?? true)
+            }
+            let upcoming = windowed.filter { ($0.start ?? .distantPast) > now }
+
+            let groups = Self.buildGroups(services: services, onCalls: current)
+            let (byKey, upByPolicy) = Self.buildUpcomingIndexes(upcoming: upcoming)
+            var curByPolicy: [String: [PDOnCall]] = [:]
+            for oc in current {
+                curByPolicy[oc.escalation_policy.id, default: []].append(oc)
+            }
+
             self.me = me
             self.groups = groups
+            self.upcomingByKey = byKey
+            self.upcomingByPolicy = upByPolicy
+            self.currentByPolicy = curByPolicy
             self.state = .loaded(Date())
         } catch {
             self.state = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }
+    }
+
+    private static func upcomingKey(for oncall: PDOnCall) -> String {
+        oncall.schedule?.id ?? "user:\(oncall.user.id)"
+    }
+
+    private static func buildUpcomingIndexes(upcoming: [PDOnCall]) -> (byKey: [String: [PDOnCall]], byPolicy: [String: [PDOnCall]]) {
+        var byKey: [String: [PDOnCall]] = [:]
+        var byPolicy: [String: [PDOnCall]] = [:]
+        for oc in upcoming {
+            byKey[upcomingKey(for: oc), default: []].append(oc)
+            byPolicy[oc.escalation_policy.id, default: []].append(oc)
+        }
+        for k in byKey.keys {
+            byKey[k]?.sort { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
+        }
+        for k in byPolicy.keys {
+            byPolicy[k]?.sort { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
+        }
+        return (byKey, byPolicy)
+    }
+
+    /// Next on-call period for the schedule/user that owns `assignment`.
+    /// Returns the closest upcoming shift after the assignment's end, preferring
+    /// a different user (i.e. an actual handover) when one is available.
+    func nextAfter(assignment: OnCallAssignment) -> PDOnCall? {
+        let key = assignment.schedule?.id ?? "user:\(assignment.user.id)"
+        let list = upcomingByKey[key] ?? []
+        let cutoff = assignment.end ?? Date()
+        return list.first { ($0.start ?? .distantPast) >= cutoff && $0.user.id != assignment.user.id }
+            ?? list.first { ($0.start ?? .distantPast) >= cutoff }
+    }
+
+    /// Current + upcoming oncalls for a policy in chronological order, used by the calendar.
+    func calendarEntries(for policyID: String) -> [PDOnCall] {
+        var entries: [PDOnCall] = []
+        entries.append(contentsOf: currentByPolicy[policyID] ?? [])
+        entries.append(contentsOf: upcomingByPolicy[policyID] ?? [])
+        return entries.sorted {
+            (($0.escalation_level, $0.start ?? .distantPast)) < (($1.escalation_level, $1.start ?? .distantPast))
+        }
+    }
+
+    /// Lookup a policy group by id (works for hidden ones too).
+    func policyGroup(for policyID: String) -> EscalationPolicyGroup? {
+        orderedGroupsIncludingHidden.first { $0.id == policyID }
     }
 
     private static func buildGroups(services: [PDService], onCalls: [PDOnCall]) -> [EscalationPolicyGroup] {

@@ -293,6 +293,7 @@ private struct PolicyCard: View {
 
     @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
+    @State private var showCalendar: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -323,6 +324,20 @@ private struct PolicyCard: View {
                     .lineLimit(1)
 
                 Spacer(minLength: 4)
+
+                Button {
+                    showCalendar.toggle()
+                } label: {
+                    Image(systemName: showCalendar ? "calendar.circle.fill" : "calendar")
+                        .font(.system(size: 11))
+                        .foregroundStyle(showCalendar ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(showCalendar ? "Hide schedule calendar" : "Show schedule calendar")
+                .popover(isPresented: $showCalendar, arrowEdge: .trailing) {
+                    CalendarPopoverView(policyID: group.id)
+                        .environmentObject(store)
+                }
 
                 if let url = group.policy.html_url, let u = URL(string: url) {
                     Button {
@@ -591,6 +606,21 @@ private struct AssignmentRow: View {
                 if let sched = assignment.schedule?.summary {
                     Text(sched).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 }
+                if let next = store.nextAfter(assignment: assignment) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.secondary)
+                        Text("Next: ")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        + Text(next.user.summary ?? "—").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                        + Text(next.start.map { " · \(Self.handoverFormatter.string(from: $0))" } ?? "")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                }
             }
             Spacer()
             if let end = assignment.end {
@@ -634,6 +664,14 @@ private struct AssignmentRow: View {
         f.timeStyle = .short
         return f
     }()
+
+    private static let handoverFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.doesRelativeDateFormatting = true
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
 }
 
 private struct Avatar: View {
@@ -651,7 +689,7 @@ private struct Avatar: View {
     }
 }
 
-private struct RoleBadge: View {
+struct RoleBadge: View {
     let level: Int
     var compact: Bool = false
 

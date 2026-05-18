@@ -127,10 +127,11 @@ actor PagerDutyAPI {
         return all
     }
 
-    func onCalls(token: String, escalationPolicyIDs: [String]) async throws -> [PDOnCall] {
+    func onCalls(token: String, escalationPolicyIDs: [String], since: Date? = nil, until: Date? = nil) async throws -> [PDOnCall] {
         if escalationPolicyIDs.isEmpty { return [] }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
         var all: [PDOnCall] = []
-        // Chunk to keep URL lengths reasonable.
         for chunk in escalationPolicyIDs.chunked(into: 25) {
             var offset = 0
             let limit = 100
@@ -141,12 +142,14 @@ actor PagerDutyAPI {
                     URLQueryItem(name: "earliest", value: "false"),
                     URLQueryItem(name: "include[]", value: "users"),
                 ]
+                if let since { items.append(URLQueryItem(name: "since", value: iso.string(from: since))) }
+                if let until { items.append(URLQueryItem(name: "until", value: iso.string(from: until))) }
                 items.append(contentsOf: chunk.map { URLQueryItem(name: "escalation_policy_ids[]", value: $0) })
                 let url = base.appending(path: "/oncalls").appending(queryItems: items)
                 let env: OnCallsEnvelope = try await get(url: url, token: token)
                 all.append(contentsOf: env.oncalls)
                 if env.more == true { offset += limit } else { break }
-                if offset > 1000 { break }
+                if offset > 2000 { break }
             }
         }
         return all
