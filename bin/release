@@ -68,8 +68,8 @@ fi
 
 # Read current values directly from project.pbxproj. Avoids depending on
 # agvtool (which needs a full Xcode install, not just Command Line Tools).
-CURRENT_MV="$(awk -F'[ =;]+' '/MARKETING_VERSION/ {print $3; exit}' "$PBXPROJ" || true)"
-CURRENT_BUILD="$(awk -F'[ =;]+' '/CURRENT_PROJECT_VERSION/ {print $3; exit}' "$PBXPROJ" || true)"
+CURRENT_MV="$(grep -m1 'MARKETING_VERSION' "$PBXPROJ" | sed -E 's/.*MARKETING_VERSION[[:space:]]*=[[:space:]]*([^;]+);.*/\1/')"
+CURRENT_BUILD="$(grep -m1 'CURRENT_PROJECT_VERSION' "$PBXPROJ" | sed -E 's/.*CURRENT_PROJECT_VERSION[[:space:]]*=[[:space:]]*([^;]+);.*/\1/')"
 CURRENT_BUILD="${CURRENT_BUILD:-0}"
 
 echo "Current: $CURRENT_MV (build $CURRENT_BUILD)"
