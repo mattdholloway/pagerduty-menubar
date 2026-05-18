@@ -10,10 +10,11 @@ struct pagerduty_menubarApp: App {
                 .environmentObject(store)
                 .frame(width: 380)
         } label: {
-            Label {
-                Text(store.menuBarTitle)
-            } icon: {
+            HStack(spacing: 4) {
                 Image(systemName: store.menuBarSymbol)
+                if !store.menuBarTitle.isEmpty {
+                    Text(store.menuBarTitle)
+                }
             }
         }
         .menuBarExtraStyle(.window)
