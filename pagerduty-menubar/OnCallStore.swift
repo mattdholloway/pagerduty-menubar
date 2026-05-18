@@ -269,24 +269,43 @@ final class OnCallStore: ObservableObject {
 
     var menuBarTitle: String {
         let pinned = pinnedAssignments
-        if !pinned.isEmpty {
-            let parts = pinned.map { item -> String in
-                let who = item.assignment.user.summary ?? "—"
-                let label = item.assignment.schedule?.summary ?? (item.policy.summary ?? "")
-                return label.isEmpty ? who : "\(label): \(who)"
-            }
-            let joined = parts.joined(separator: " · ")
-            return Self.truncate(joined, max: 48)
+        guard !pinned.isEmpty else {
+            if case .failed = state { return "!" }
+            return ""
         }
-        switch state {
-        case .failed: return "!"
-        default: return ""
-        }
+        let names = pinned.map { Self.firstName(of: $0.assignment.user.summary ?? "—") }
+        return Self.condense(names, maxLength: 24)
     }
 
-    private static func truncate(_ s: String, max: Int) -> String {
-        if s.count <= max { return s }
-        return String(s.prefix(max - 1)) + "…"
+    private static func firstName(of full: String) -> String {
+        full.split(separator: " ").first.map(String.init) ?? full
+    }
+
+    /// Join names with " · ". If the joined string exceeds maxLength, drop the
+    /// tail names and append "+N" so the menu bar stays compact regardless of
+    /// how many schedules the user pins.
+    private static func condense(_ names: [String], maxLength: Int) -> String {
+        let separator = " · "
+        var included: [String] = []
+        for n in names {
+            let trial = (included + [n]).joined(separator: separator)
+            if trial.count <= maxLength {
+                included.append(n)
+            } else {
+                break
+            }
+        }
+        if included.isEmpty {
+            // Single name longer than the budget — hard truncate.
+            let n = names[0]
+            return String(n.prefix(max(1, maxLength - 1))) + "…"
+        }
+        let omitted = names.count - included.count
+        let base = included.joined(separator: separator)
+        if omitted > 0 {
+            return "\(base) +\(omitted)"
+        }
+        return base
     }
 
     var menuBarSymbol: String {
