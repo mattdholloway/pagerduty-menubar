@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct MenuView: View {
     @EnvironmentObject private var store: OnCallStore
@@ -627,11 +628,17 @@ private struct PolicyCard: View {
     @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
     @State private var showCalendar: Bool = false
+    @State private var isDropTargeted: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 6) {
                 if reorderable {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.6))
+                        .frame(width: 12, height: 12)
+                        .help("Drag to reorder")
                     let canUp = store.canMovePolicy(group.id, by: -1)
                     let canDown = store.canMovePolicy(group.id, by: 1)
                     VStack(spacing: 1) {
@@ -755,7 +762,50 @@ private struct PolicyCard: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isDropTargeted ? Color.accentColor : Color.clear, lineWidth: 2)
+                )
         )
+        .modifier(PolicyDragDropModifier(
+            enabled: reorderable,
+            id: group.id,
+            isTargeted: $isDropTargeted,
+            onDrop: { sourceID in
+                store.moveBefore(sourceID, target: group.id)
+            }
+        ))
+    }
+}
+
+/// Drag-and-drop for reordering policy cards. Uses the legacy
+/// onDrag/onDrop(NSItemProvider) API because the newer Transferable/.draggable
+/// API drops events unreliably inside MenuBarExtra(.window) panels. The
+/// up/down chevrons in the card header remain as a guaranteed fallback.
+private struct PolicyDragDropModifier: ViewModifier {
+    let enabled: Bool
+    let id: String
+    @Binding var isTargeted: Bool
+    let onDrop: (String) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .onDrag { NSItemProvider(object: id as NSString) }
+                .onDrop(
+                    of: [UTType.text.identifier, UTType.utf8PlainText.identifier, UTType.plainText.identifier],
+                    isTargeted: $isTargeted
+                ) { providers in
+                    guard let provider = providers.first else { return false }
+                    provider.loadObject(ofClass: NSString.self) { obj, _ in
+                        guard let str = obj as? String, str != id else { return }
+                        Task { @MainActor in onDrop(str) }
+                    }
+                    return true
+                }
+        } else {
+            content
+        }
     }
 }
 

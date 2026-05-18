@@ -248,6 +248,24 @@ final class OnCallStore: ObservableObject {
         persistPolicyOrder(order)
     }
 
+    /// Reorder `sourceID` to land before `targetID` (drop-target semantics).
+    /// Operates within the visible "My" partition the same way `nudgePolicy`
+    /// does, then writes the swap into the full ordering so hidden / other
+    /// policies keep their relative positions.
+    func moveBefore(_ sourceID: String, target targetID: String) {
+        guard sourceID != targetID else { return }
+        let visible = orderedGroups.map(\.id)
+        guard visible.contains(sourceID), visible.contains(targetID) else { return }
+
+        var full = orderedGroupsIncludingHidden.map(\.id)
+        guard let fromFull = full.firstIndex(of: sourceID),
+              let toFull = full.firstIndex(of: targetID) else { return }
+        full.remove(at: fromFull)
+        let adjusted = toFull > fromFull ? toFull - 1 : toFull
+        full.insert(sourceID, at: adjusted)
+        persistPolicyOrder(full)
+    }
+
     /// Move the policy with `id` one slot up (toward index 0) or down. The
     /// movement is computed relative to the user's *visible* "My" list (so
     /// hidden or out-of-section policies don't make the click appear to do
