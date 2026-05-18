@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Combine
 
 /// Tiny in-app updater that polls the GitHub Releases API for the latest tag
 /// and, when newer than the current build, downloads the attached
