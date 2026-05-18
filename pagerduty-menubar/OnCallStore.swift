@@ -156,6 +156,24 @@ final class OnCallStore: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Move the policy with `id` one slot up (toward index 0) or down. No-op if at the edge.
+    func nudgePolicy(_ id: String, by delta: Int) {
+        var order = orderedGroupsIncludingHidden.map(\.id)
+        guard let idx = order.firstIndex(of: id) else { return }
+        let target = idx + delta
+        guard target >= 0, target < order.count else { return }
+        order.remove(at: idx)
+        order.insert(id, at: target)
+        persistPolicyOrder(order)
+    }
+
+    func canMovePolicy(_ id: String, by delta: Int) -> Bool {
+        let order = orderedGroupsIncludingHidden.map(\.id)
+        guard let idx = order.firstIndex(of: id) else { return false }
+        let target = idx + delta
+        return target >= 0 && target < order.count
+    }
+
     private func persistPolicyOrder(_ order: [String]) {
         policyOrder = order
         policyOrderRaw = order.joined(separator: "\n")

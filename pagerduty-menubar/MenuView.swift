@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct MenuView: View {
     @EnvironmentObject private var store: OnCallStore
@@ -304,6 +305,26 @@ private struct PolicyCard: View {
                         .foregroundStyle(.secondary.opacity(0.7))
                         .frame(width: 12, height: 12)
                         .help("Drag to reorder")
+
+                    Button {
+                        store.nudgePolicy(group.id, by: -1)
+                    } label: {
+                        Image(systemName: "chevron.up").font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!store.canMovePolicy(group.id, by: -1))
+                    .help("Move up")
+
+                    Button {
+                        store.nudgePolicy(group.id, by: 1)
+                    } label: {
+                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!store.canMovePolicy(group.id, by: 1))
+                    .help("Move down")
                 }
                 Text(group.policy.summary ?? "Escalation policy")
                     .font(.system(size: 12, weight: .semibold))
@@ -481,13 +502,19 @@ private struct ReorderModifier: ViewModifier {
     func body(content: Content) -> some View {
         if enabled {
             content
-                .draggable(id)
-                .dropDestination(for: String.self) { items, _ in
-                    guard let first = items.first, first != id else { return false }
-                    onDrop(first)
+                .onDrag {
+                    NSItemProvider(object: id as NSString)
+                }
+                .onDrop(
+                    of: [.text, .utf8PlainText, .plainText],
+                    isTargeted: $isTargeted
+                ) { providers in
+                    guard let provider = providers.first else { return false }
+                    _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
+                        guard let str = obj as? String, str != id else { return }
+                        Task { @MainActor in onDrop(str) }
+                    }
                     return true
-                } isTargeted: { value in
-                    isTargeted = value
                 }
         } else {
             content
