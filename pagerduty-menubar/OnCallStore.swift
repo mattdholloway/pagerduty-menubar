@@ -346,7 +346,7 @@ final class OnCallStore: ObservableObject {
     }
 
     // Calendar / "next" lookahead window in days
-    static let lookaheadDays: Int = 7
+    static let lookaheadDays: Int = 14
 
     @Published private(set) var upcomingByKey: [String: [PDOnCall]] = [:]
     @Published private(set) var upcomingByPolicy: [String: [PDOnCall]] = [:]

@@ -152,19 +152,48 @@ struct MenuView: View {
     @ViewBuilder
     private var myUpcomingSection: some View {
         let shifts = filteredShifts(store.myUpcomingShifts)
-        if !shifts.isEmpty {
-            sectionHeader(
-                symbol: "person.crop.circle.badge.clock",
-                title: "Your on-call schedule",
-                count: shifts.count,
-                tint: .accentColor
-            )
+        sectionHeader(
+            symbol: "person.crop.circle.badge.clock",
+            title: "Your on-call schedule",
+            count: shifts.count,
+            tint: .accentColor
+        )
+        if shifts.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.green)
+                    .font(.system(size: 14))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("No on-calls in the next \(OnCallStore.lookaheadDays) days")
+                        .font(.system(size: 11, weight: .medium))
+                    if store.me == nil {
+                        Text("Waiting for user info…")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("You're free until at least \(Self.windowEndLabel)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        } else {
             VStack(spacing: 4) {
                 ForEach(shifts) { shift in
                     MyShiftRow(shift: shift)
                 }
             }
         }
+    }
+
+    private static var windowEndLabel: String {
+        let end = Calendar.current.date(byAdding: .day, value: OnCallStore.lookaheadDays, to: Date()) ?? Date()
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none
+        return f.string(from: end)
     }
 
     private func filteredShifts(_ input: [MyShift]) -> [MyShift] {
