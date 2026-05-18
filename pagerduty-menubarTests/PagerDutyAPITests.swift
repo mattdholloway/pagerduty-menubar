@@ -312,3 +312,23 @@ extension PagerDutyAPITests {
         XCTAssertNotNil(snapshot?.reset)
     }
 }
+
+extension PagerDutyAPITests {
+
+    func test_concurrentRequests_areCoalesced_intoSingleNetworkCall() async throws {
+        let body = #"{"user":{"id":"PXXX","name":"Alice","email":null,"html_url":null,"avatar_url":null,"time_zone":null,"teams":null}}"#
+        StubURLProtocol.register(
+            { $0.path == "/users/me" },
+            response: .init(status: 200, body: Data(body.utf8))
+        )
+        let api = PagerDutyAPI(session: .stubbed())
+        // Fire 5 concurrent identical requests.
+        async let a = api.currentUser(token: "t")
+        async let b = api.currentUser(token: "t")
+        async let c = api.currentUser(token: "t")
+        async let d = api.currentUser(token: "t")
+        async let e = api.currentUser(token: "t")
+        _ = try await (a, b, c, d, e)
+        XCTAssertEqual(StubURLProtocol.capturedURLs().count, 1, "concurrent identical GETs should coalesce")
+    }
+}

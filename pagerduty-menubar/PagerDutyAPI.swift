@@ -119,11 +119,15 @@ actor PagerDutyAPI {
     private let decoder: JSONDecoder
 
     /// Conditional-request cache. Keyed by canonical URL string.
-    private struct CachedResponse {
+    struct CachedResponse: Codable {
         let etag: String
         let data: Data
     }
     private var etagCache: [String: CachedResponse] = [:]
+
+    /// In-flight GETs by URL key. Lets multiple concurrent callers share a
+    /// single network round-trip instead of issuing duplicates.
+    private var inflight: [String: Task<Data, Error>] = [:]
 
     /// Last-known rate-limit headers. Surfaced for clients that want to
     /// throttle proactively.
@@ -162,6 +166,15 @@ actor PagerDutyAPI {
     }
 
     // MARK: - Public endpoints
+
+    /// Returns a serializable copy of the current ETag cache so the host can
+    /// persist it to disk and feed it back next launch.
+    func exportEtagCache() -> [String: CachedResponse] { etagCache }
+
+    /// Replace the ETag cache with `incoming`. Drops anything we already have.
+    func importEtagCache(_ incoming: [String: CachedResponse]) {
+        etagCache = incoming
+    }
 
     func currentUser(token: String) async throws -> PDUser {
         let url = base.appending(path: "/users/me")
@@ -289,10 +302,41 @@ actor PagerDutyAPI {
     // MARK: - Internal
 
     private func get<T: Decodable>(url: URL, token: String) async throws -> T {
+        let data = try await fetchRaw(url: url, token: token)
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            // If we returned cached data and the schema drifted, drop and
+            // force a fresh fetch next time.
+            etagCache[url.absoluteString] = nil
+            throw PDError.decoding(String(describing: error))
+        }
+    }
+
+    /// Returns response bytes for `url`, coalescing concurrent identical
+    /// requests so only one network round-trip happens.
+    private func fetchRaw(url: URL, token: String) async throws -> Data {
+        let key = url.absoluteString
+        if let existing = inflight[key] {
+            return try await existing.value
+        }
+        let task = Task<Data, Error> { [weak self] in
+            guard let self else { throw PDError.transport("client deallocated") }
+            defer { Task { await self.clearInflight(key) } }
+            return try await self.performGet(url: url, token: token, key: key)
+        }
+        inflight[key] = task
+        return try await task.value
+    }
+
+    private func clearInflight(_ key: String) {
+        inflight[key] = nil
+    }
+
+    private func performGet(url: URL, token: String, key: String) async throws -> Data {
         try await waitIfBlocked()
         try await backoffIfNeeded()
 
-        let key = url.absoluteString
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/vnd.pagerduty+json;version=2", forHTTPHeaderField: "Accept")
@@ -318,13 +362,7 @@ actor PagerDutyAPI {
 
         // 304 Not Modified — reuse the cached body.
         if http.statusCode == 304, let cached = etagCache[key] {
-            do {
-                return try decoder.decode(T.self, from: cached.data)
-            } catch {
-                // Cached data went stale somehow; drop and force-refresh next call.
-                etagCache[key] = nil
-                throw PDError.decoding(String(describing: error))
-            }
+            return cached.data
         }
 
         guard (200...299).contains(http.statusCode) else {
@@ -341,12 +379,7 @@ actor PagerDutyAPI {
         if let etag = http.value(forHTTPHeaderField: "ETag") {
             etagCache[key] = CachedResponse(etag: etag, data: data)
         }
-
-        do {
-            return try decoder.decode(T.self, from: data)
-        } catch {
-            throw PDError.decoding(String(describing: error))
-        }
+        return data
     }
 
     private func waitIfBlocked() async throws {

@@ -137,6 +137,11 @@ final class OnCallStore: ObservableObject {
         }
 
         if hasToken {
+            // Hydrate the API's ETag cache from disk so the first refresh
+            // benefits from 304 Not Modified responses.
+            if let etags = CacheStore.loadEtags() {
+                Task { [api] in await api.importEtagCache(etags) }
+            }
             startTimer()
             // Only kick off an immediate refresh if the cached snapshot is
             // older than the configured interval. Otherwise wait for the
@@ -479,6 +484,12 @@ final class OnCallStore: ObservableObject {
             hasToken = false
             return
         }
+        // Apply the same rate-limit guard as the popover poll. If we're low on
+        // quota, surface that and skip — the next periodic tick will retry.
+        if let rl = await api.lastRateLimit, rl.remaining < 100, rl.reset > Date() {
+            state = .failed("Throttling to respect PagerDuty rate limit (resets \(Self.shortRelative.localizedString(for: rl.reset, relativeTo: Date())))")
+            return
+        }
         state = .loading
         do {
             let me = try await api.currentUser(token: token)
@@ -709,7 +720,18 @@ final class OnCallStore: ObservableObject {
             upcomingByKey: upcomingByKey,
             activeIncidents: activeIncidents
         ))
+        // Also persist the ETag cache so 304s work across restarts.
+        Task { [api] in
+            let etags = await api.exportEtagCache()
+            CacheStore.saveEtags(etags)
+        }
     }
+
+    private static let shortRelative: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
 
     /// Test seam: inject a raw incident list and apply the production sort.
     /// Marked internal so @testable import can reach it.
