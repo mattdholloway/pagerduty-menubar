@@ -331,6 +331,7 @@ final class OnCallStore: ObservableObject {
     /// tail names and append "+N" so the menu bar stays compact regardless of
     /// how many schedules the user pins.
     static func condense(_ names: [String], maxLength: Int) -> String {
+        guard !names.isEmpty else { return "" }
         let separator = " · "
         var included: [String] = []
         for n in names {

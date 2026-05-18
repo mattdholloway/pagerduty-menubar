@@ -16,7 +16,7 @@ final class StubURLProtocol: URLProtocol {
     typealias Matcher = (URLComponents) -> Bool
     nonisolated(unsafe) static var responders: [(Matcher, Response)] = []
     nonisolated(unsafe) static var capturedRequests: [URLRequest] = []
-    nonisolated(unsafe) static let queue = DispatchQueue(label: "stub-url-protocol")
+    static let queue = DispatchQueue(label: "stub-url-protocol")
 
     static func reset() {
         queue.sync {
