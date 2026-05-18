@@ -78,7 +78,19 @@ struct SettingsView: View {
                     Button("Reset") { store.resetHiddenSchedules() }
                         .disabled(store.hiddenScheduleCount == 0)
                 }
-                Text("Use the eye icon next to any schedule in the menu to hide it. Hidden schedules appear greyed-out at the bottom of the menu and are remembered between launches.")
+                HStack {
+                    Text("Pinned to menu bar: \(store.pinnedKeys.count)")
+                    Spacer()
+                    Button("Reset") { store.resetPinned() }
+                        .disabled(store.pinnedKeys.isEmpty)
+                }
+                HStack {
+                    Text("Custom order")
+                    Spacer()
+                    Button("Reset to default") { store.resetPolicyOrder() }
+                        .disabled(store.policyOrder.isEmpty)
+                }
+                Text("Drag policy cards in the menu to reorder them. Use the eye icon to hide a schedule (appears greyed-out at the bottom). Use the pin icon to show that schedule's current on-call directly in the menu bar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

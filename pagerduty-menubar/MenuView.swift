@@ -159,7 +159,8 @@ struct MenuView: View {
                     group: group,
                     meID: store.me?.id,
                     expanded: expandedPolicies.contains(group.id),
-                    onToggle: { toggleExpanded(group.id) }
+                    onToggle: { toggleExpanded(group.id) },
+                    reorderable: false
                 )
                 .environmentObject(store)
             }
@@ -168,7 +169,7 @@ struct MenuView: View {
 
     @ViewBuilder
     private var allGroupsSection: some View {
-        let all = filteredGroups(store.groups)
+        let all = filteredGroups(store.orderedGroups)
         if !all.isEmpty {
             sectionHeader(
                 symbol: "list.bullet.rectangle",
@@ -181,7 +182,8 @@ struct MenuView: View {
                     group: group,
                     meID: store.me?.id,
                     expanded: expandedPolicies.contains(group.id),
-                    onToggle: { toggleExpanded(group.id) }
+                    onToggle: { toggleExpanded(group.id) },
+                    reorderable: search.isEmpty
                 )
                 .environmentObject(store)
             }
@@ -318,13 +320,22 @@ private struct PolicyCard: View {
     let meID: String?
     let expanded: Bool
     let onToggle: () -> Void
+    let reorderable: Bool
 
     @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
+    @State private var isDropTargeted: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if reorderable {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary.opacity(0.7))
+                        .frame(width: 12, height: 12)
+                        .help("Drag to reorder")
+                }
                 Button(action: onToggle) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .bold))
@@ -401,11 +412,49 @@ private struct PolicyCard: View {
             }
         }
         .padding(10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isDropTargeted ? Color.accentColor : Color.clear, lineWidth: 2)
+                )
+        )
+        .modifier(ReorderModifier(
+            enabled: reorderable,
+            id: group.id,
+            isTargeted: $isDropTargeted,
+            onDrop: { sourceID in
+                store.movePolicy(sourceID, relativeTo: group.id, before: true)
+            }
+        ))
     }
 
     private func visibleAssignments(in level: OnCallLevel) -> [OnCallAssignment] {
         level.assignments.filter { !store.isHidden(scheduleID: $0.hideKey) }
+    }
+}
+
+private struct ReorderModifier: ViewModifier {
+    let enabled: Bool
+    let id: String
+    @Binding var isTargeted: Bool
+    let onDrop: (String) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .draggable(id)
+                .dropDestination(for: String.self) { items, _ in
+                    guard let first = items.first, first != id else { return false }
+                    onDrop(first)
+                    return true
+                } isTargeted: { value in
+                    isTargeted = value
+                }
+        } else {
+            content
+        }
     }
 }
 
@@ -496,6 +545,7 @@ private struct AssignmentRow: View {
     @Environment(\.openURL) private var openURL
 
     private var isHidden: Bool { store.isHidden(scheduleID: assignment.hideKey) }
+    private var isPinned: Bool { store.isPinned(key: assignment.hideKey) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -513,6 +563,12 @@ private struct AssignmentRow: View {
                             .foregroundStyle(Color.accentColor)
                     }
                     RoleBadge(level: level)
+                    if isPinned {
+                        Image(systemName: "menubar.rectangle")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .help("Showing in menu bar")
+                    }
                 }
                 if let sched = assignment.schedule?.summary {
                     Text(sched).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -530,6 +586,16 @@ private struct AssignmentRow: View {
                         .help(end.formatted(date: .complete, time: .shortened))
                 }
             }
+            Button {
+                store.setPinned(key: assignment.hideKey, pinned: !isPinned)
+            } label: {
+                Image(systemName: isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isPinned ? Color.accentColor : .secondary)
+                    .rotationEffect(.degrees(45))
+            }
+            .buttonStyle(.borderless)
+            .help(isPinned ? "Remove from menu bar" : "Show in menu bar")
             Button {
                 store.setHidden(scheduleID: assignment.hideKey, hidden: !isHidden)
             } label: {

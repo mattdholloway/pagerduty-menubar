@@ -21,7 +21,7 @@ struct pagerduty_menubarApp: App {
         Settings {
             SettingsView()
                 .environmentObject(store)
-                .frame(width: 460, height: 320)
+                .frame(width: 460, height: 380)
         }
     }
 }

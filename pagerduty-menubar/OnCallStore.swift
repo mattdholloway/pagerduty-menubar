@@ -66,8 +66,12 @@ final class OnCallStore: ObservableObject {
     // Settings
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
     @AppStorage("hiddenScheduleIDs") private var hiddenScheduleIDsRaw: String = ""
+    @AppStorage("policyOrder") private var policyOrderRaw: String = ""
+    @AppStorage("pinnedAssignmentKeys") private var pinnedKeysRaw: String = ""
 
     private(set) var hiddenScheduleIDs: Set<String> = []
+    private(set) var policyOrder: [String] = []
+    private(set) var pinnedKeys: [String] = []  // ordered
 
     private let api = PagerDutyAPI()
     private var refreshTask: Task<Void, Never>?
@@ -78,10 +82,93 @@ final class OnCallStore: ObservableObject {
         self.hiddenScheduleIDs = Set(
             hiddenScheduleIDsRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty }
         )
+        self.policyOrder = policyOrderRaw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        self.pinnedKeys = pinnedKeysRaw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         if hasToken {
             startTimer()
             refresh()
         }
+    }
+
+    // MARK: - Policy ordering
+
+    /// Groups in the user's preferred order; unknown EPs appended at end.
+    var orderedGroups: [EscalationPolicyGroup] {
+        let byID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        var seen = Set<String>()
+        var result: [EscalationPolicyGroup] = []
+        for id in policyOrder {
+            if let g = byID[id], !seen.contains(id) {
+                result.append(g); seen.insert(id)
+            }
+        }
+        for g in groups where !seen.contains(g.id) {
+            result.append(g)
+        }
+        return result
+    }
+
+    /// Move `sourceID` to the slot currently occupied by `targetID`. If
+    /// `before` is false the source lands immediately after the target.
+    func movePolicy(_ sourceID: String, relativeTo targetID: String, before: Bool = true) {
+        guard sourceID != targetID else { return }
+        // Start from the displayed order so reorders behave predictably even
+        // before we've persisted a full list.
+        var order = orderedGroups.map(\.id)
+        order.removeAll { $0 == sourceID }
+        guard let targetIdx = order.firstIndex(of: targetID) else {
+            order.append(sourceID)
+            persistPolicyOrder(order); return
+        }
+        order.insert(sourceID, at: before ? targetIdx : targetIdx + 1)
+        persistPolicyOrder(order)
+    }
+
+    func resetPolicyOrder() {
+        policyOrder = []
+        policyOrderRaw = ""
+        objectWillChange.send()
+    }
+
+    private func persistPolicyOrder(_ order: [String]) {
+        policyOrder = order
+        policyOrderRaw = order.joined(separator: "\n")
+        objectWillChange.send()
+    }
+
+    // MARK: - Menu bar pins
+
+    func isPinned(key: String) -> Bool { pinnedKeys.contains(key) }
+
+    func setPinned(key: String, pinned: Bool) {
+        if pinned {
+            if !pinnedKeys.contains(key) { pinnedKeys.append(key) }
+        } else {
+            pinnedKeys.removeAll { $0 == key }
+        }
+        pinnedKeysRaw = pinnedKeys.joined(separator: "\n")
+        objectWillChange.send()
+    }
+
+    func resetPinned() {
+        pinnedKeys = []
+        pinnedKeysRaw = ""
+        objectWillChange.send()
+    }
+
+    /// Pinned assignments resolved against the latest data, in the user's pin order.
+    var pinnedAssignments: [HiddenAssignment] {
+        var byKey: [String: HiddenAssignment] = [:]
+        for group in groups {
+            for level in group.levels {
+                for a in level.assignments {
+                    if pinnedKeys.contains(a.hideKey) {
+                        byKey[a.hideKey] = HiddenAssignment(policy: group.policy, level: level.level, assignment: a)
+                    }
+                }
+            }
+        }
+        return pinnedKeys.compactMap { byKey[$0] }
     }
 
     // MARK: - Schedule visibility
@@ -122,12 +209,25 @@ final class OnCallStore: ObservableObject {
     // MARK: - Derived UI helpers
 
     var menuBarTitle: String {
-        // Keep the menu bar text short; an icon-only label looks cleanest, but
-        // we surface a tiny status hint when something needs attention.
+        let pinned = pinnedAssignments
+        if !pinned.isEmpty {
+            let parts = pinned.map { item -> String in
+                let who = item.assignment.user.summary ?? "—"
+                let label = item.assignment.schedule?.summary ?? (item.policy.summary ?? "")
+                return label.isEmpty ? who : "\(label): \(who)"
+            }
+            let joined = parts.joined(separator: " · ")
+            return Self.truncate(joined, max: 48)
+        }
         switch state {
         case .failed: return "!"
         default: return ""
         }
+    }
+
+    private static func truncate(_ s: String, max: Int) -> String {
+        if s.count <= max { return s }
+        return String(s.prefix(max - 1)) + "…"
     }
 
     var menuBarSymbol: String {
@@ -147,7 +247,7 @@ final class OnCallStore: ObservableObject {
 
     var myOnCallGroups: [EscalationPolicyGroup] {
         guard let me else { return [] }
-        return groups.filter { $0.contains(userID: me.id, atLevelOne: true) }
+        return orderedGroups.filter { $0.contains(userID: me.id, atLevelOne: true) }
     }
 
     // MARK: - Token
