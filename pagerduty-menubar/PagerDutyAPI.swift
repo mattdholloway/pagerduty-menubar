@@ -279,6 +279,9 @@ actor PagerDutyAPI {
         guard (200...299).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
             let snippet = body.count > 200 ? String(body.prefix(200)) + "…" : body
+            if http.statusCode == 429 {
+                throw PDError.http(429, "Rate limited by PagerDuty — try again in a minute.")
+            }
             throw PDError.http(http.statusCode, snippet)
         }
         do {

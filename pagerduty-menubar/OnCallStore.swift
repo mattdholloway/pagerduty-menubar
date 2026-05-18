@@ -82,9 +82,12 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var state: LoadState = .idle
     @Published var hasToken: Bool = false
     @Published private(set) var activeIncidents: [PDIncident] = []
+    @Published private(set) var otherIncidents: [PDIncident] = []
+    @Published private(set) var otherIncidentsLoaded: Bool = false
+    @Published private(set) var otherIncidentsLoading: Bool = false
     @Published private(set) var incidentMutationError: String?
-    @Published private(set) var pendingIncidentIDs: Set<String> = []   // optimistic in-flight
-    @Published var recentIncidentAction: IncidentUndo?                  // for the undo strip
+    @Published private(set) var pendingIncidentIDs: Set<String> = []
+    @Published var recentIncidentAction: IncidentUndo?
 
     // Settings (refresh interval keeps using @AppStorage — it's a simple Int)
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
@@ -405,6 +408,7 @@ final class OnCallStore: ObservableObject {
             state = .failed("No PagerDuty API token set.")
             return
         }
+        resetOtherIncidents()
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             await self?.performRefresh()
@@ -430,16 +434,27 @@ final class OnCallStore: ObservableObject {
             let me = try await api.currentUser(token: token)
             let teamIDs = (me.teams ?? []).map { $0.id }
 
-            // Fan out independent requests in parallel.
+            // Services + policies first so we know what "mine" means.
             async let servicesTask = api.services(token: token, teamIDs: teamIDs)
             async let allPoliciesTask = api.allEscalationPolicies(token: token)
-            async let incidentsTask = api.incidents(token: token)
             let services = try await servicesTask
             let allPolicies = try await allPoliciesTask
-            let incidents = try await incidentsTask
 
             let myEPIDs = Set(services.compactMap { $0.escalation_policy?.id })
+            let myServiceIDs = services.map(\.id)
             let allEPIDs = Set(allPolicies.map(\.id)).union(myEPIDs)
+
+            // Scope incidents to MINE only to keep request volume sane on
+            // large accounts. Union of (assignee=me) ∪ (service in my teams).
+            // PagerDuty AND's filters per request, so we issue two and dedupe.
+            async let assignedTask = api.incidents(token: token, userIDs: [me.id])
+            async let serviceTask = api.incidents(token: token, serviceIDs: myServiceIDs)
+            let assigned = try await assignedTask
+            let serviceScoped = try await serviceTask
+            var byID: [String: PDIncident] = [:]
+            for inc in assigned { byID[inc.id] = inc }
+            for inc in serviceScoped { byID[inc.id] = inc }
+            let mineIncidents = Array(byID.values)
 
             let now = Date()
             let until = Calendar.current.date(byAdding: .day, value: Self.lookaheadDays, to: now) ?? now.addingTimeInterval(7 * 86400)
@@ -463,7 +478,7 @@ final class OnCallStore: ObservableObject {
             self.upcomingByKey = byKey
             self.upcomingByPolicy = upByPolicy
             self.currentByPolicy = curByPolicy
-            self.activeIncidents = Self.sortIncidents(incidents)
+            self.activeIncidents = Self.sortIncidents(mineIncidents)
             self.state = .loaded(Date())
 
             // Phase 3: post macOS notifications for any newly-triggered
@@ -478,17 +493,56 @@ final class OnCallStore: ObservableObject {
     }
 
     /// Faster, incidents-only refresh used by the popover so the inbox
-    /// reflects new pages within a minute while the user is looking.
+    /// reflects new pages within a minute while the user is looking. Scoped
+    /// to MINE only — same as the main refresh — to keep request volume low.
     func refreshIncidents() async {
-        guard let token = KeychainStore.loadToken(), let myID = self.me?.id else { return }
+        guard let token = KeychainStore.loadToken(), let me = self.me else { return }
+        let myServiceIDs = groups.filter { myPolicyIDs.contains($0.id) }.flatMap { $0.services.map(\.id) }
         do {
-            let incidents = try await api.incidents(token: token)
-            self.activeIncidents = Self.sortIncidents(incidents)
-            NotificationsCoordinator.shared.diffAndNotify(incidents: self.activeIncidents, myUserID: myID)
+            async let assignedTask = api.incidents(token: token, userIDs: [me.id])
+            async let serviceTask = api.incidents(token: token, serviceIDs: myServiceIDs)
+            let assigned = try await assignedTask
+            let serviceScoped = try await serviceTask
+            var byID: [String: PDIncident] = [:]
+            for inc in assigned { byID[inc.id] = inc }
+            for inc in serviceScoped { byID[inc.id] = inc }
+            self.activeIncidents = Self.sortIncidents(Array(byID.values))
+            NotificationsCoordinator.shared.diffAndNotify(incidents: self.activeIncidents, myUserID: me.id)
         } catch {
-            // Stay silent on transient incident refresh failures — the next
-            // full refresh tick will retry. We don't clobber `state`.
+            // Stay silent on transient incident refresh failures.
         }
+    }
+
+    /// Lazy load: the full account-wide active incident list, used to power
+    /// the "Other active incidents" search. We don't auto-refresh this; the
+    /// user pulls it once and we keep the snapshot until next manual refresh.
+    func loadOtherIncidentsIfNeeded() {
+        guard !otherIncidentsLoaded, !otherIncidentsLoading,
+              let token = KeychainStore.loadToken(), let me = self.me else { return }
+        otherIncidentsLoading = true
+        Task { [weak self] in
+            defer { Task { @MainActor in self?.otherIncidentsLoading = false } }
+            do {
+                guard let all = try await self?.api.incidents(token: token) else { return }
+                let myIDs = Set(self?.activeIncidents.map(\.id) ?? [])
+                await MainActor.run {
+                    let other = all.filter { !myIDs.contains($0.id) && !($0.assignments?.contains(where: { $0.assignee.id == me.id }) ?? false) }
+                    self?.otherIncidents = OnCallStore.sortIncidents(other)
+                    self?.otherIncidentsLoaded = true
+                }
+            } catch {
+                // Surface as a banner if the user tried to load.
+                await MainActor.run {
+                    self?.incidentMutationError = "Couldn't load other incidents: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    /// Reset other-incident snapshot so the next search triggers a fresh fetch.
+    func resetOtherIncidents() {
+        otherIncidents = []
+        otherIncidentsLoaded = false
     }
 
     private static func sortIncidents(_ list: [PDIncident]) -> [PDIncident] {
@@ -513,8 +567,8 @@ final class OnCallStore: ObservableObject {
         return ids.isEmpty ? nil : ids
     }
 
-    var myActiveIncidents: [PDIncident] { activeIncidents.filter { isMyIncident($0) } }
-    var otherActiveIncidents: [PDIncident] { activeIncidents.filter { !isMyIncident($0) } }
+    var myActiveIncidents: [PDIncident] { activeIncidents }
+    var otherActiveIncidents: [PDIncident] { otherIncidents }
 
     // MARK: - Incidents: mutations
 

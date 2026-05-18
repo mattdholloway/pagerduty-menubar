@@ -16,10 +16,12 @@ struct MenuView: View {
             Divider()
             footer
         }
+        .onChange(of: search) { _, newValue in
+            if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                store.loadOtherIncidentsIfNeeded()
+            }
+        }
         .task {
-            // While the popover is visible, refresh incidents every 60s for
-            // near-realtime updates. Cancelled automatically when the view
-            // disappears (i.e. the popover closes).
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
                 if Task.isCancelled { break }
@@ -124,11 +126,11 @@ struct MenuView: View {
                         incidentErrorBanner
                         incidentUndoStrip
                         myIncidentsSection
-                        otherIncidentsSection
                         myUpcomingSection
                         myOnCallSection
                         allGroupsSection
                         otherPoliciesSection
+                        otherIncidentsSection
                         hiddenSection
                     }
                     .padding(.horizontal, 12)
@@ -268,44 +270,66 @@ struct MenuView: View {
 
     @ViewBuilder
     private var otherIncidentsSection: some View {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let loaded = store.otherIncidentsLoaded
         let all = store.otherActiveIncidents
-        if all.isEmpty { EmptyView() } else {
-            let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let matches = q.isEmpty ? [] : all.filter { inc in
-                inc.title.lowercased().contains(q) ||
-                (inc.service?.summary ?? "").lowercased().contains(q) ||
-                (inc.assignments?.contains { ($0.assignee.summary ?? "").lowercased().contains(q) } ?? false)
-            }
-            let count = q.isEmpty ? all.count : matches.count
-            sectionHeader(symbol: "tray", title: "Other active incidents", count: count, tint: .secondary)
-            if q.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                        .font(.system(size: 12))
-                    Text("Type above to search \(all.count) other active incident\(all.count == 1 ? "" : "s") on this PagerDuty account.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 10)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
-            } else if matches.isEmpty {
-                Text("No other incidents match “\(search)”")
+        let matches: [PDIncident] = q.isEmpty ? [] : all.filter { inc in
+            inc.title.lowercased().contains(q) ||
+            (inc.service?.summary ?? "").lowercased().contains(q) ||
+            (inc.assignments?.contains { ($0.assignee.summary ?? "").lowercased().contains(q) } ?? false)
+        }
+        let count = loaded ? (q.isEmpty ? all.count : matches.count) : 0
+        sectionHeader(symbol: "tray", title: "Other active incidents", count: count, tint: .secondary)
+        if q.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                Text(loaded
+                    ? "Type above to search \(all.count) other active incident\(all.count == 1 ? "" : "s") on this PagerDuty account."
+                    : "Type above to load and search active incidents from across the account."
+                )
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
-            } else {
-                VStack(spacing: 4) {
-                    ForEach(matches.prefix(20)) { inc in IncidentRow(incident: inc, isMine: false) }
-                    if matches.count > 20 {
-                        Text("Showing 20 of \(matches.count) — refine the search.")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 2)
-                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        } else if !loaded {
+            HStack(spacing: 8) {
+                if store.otherIncidentsLoading {
+                    ProgressView().controlSize(.small)
+                    Text("Loading other incidents…").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "tray.and.arrow.down")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                    Text("Tap to load other active incidents").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Load") { store.loadOtherIncidentsIfNeeded() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            .onAppear { store.loadOtherIncidentsIfNeeded() }
+        } else if matches.isEmpty {
+            Text("No other incidents match “\(search)”")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 8)
+        } else {
+            VStack(spacing: 4) {
+                ForEach(matches.prefix(20)) { inc in IncidentRow(incident: inc, isMine: false) }
+                if matches.count > 20 {
+                    Text("Showing 20 of \(matches.count) — refine the search.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
                 }
             }
         }
