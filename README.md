@@ -164,6 +164,29 @@ pagerduty-menubar/
 - [ ] Per-account quick-switcher (multiple PagerDuty workspaces)
 - [ ] Notarized .dmg releases via GitHub Actions
 
+## 🚢 Releasing
+
+Versioning is integrated with Xcode's `MARKETING_VERSION` /
+`CURRENT_PROJECT_VERSION` via `agvtool` (`VERSIONING_SYSTEM = apple-generic`).
+
+```bash
+bin/release 0.2.0           # bump, commit, tag v0.2.0, push
+bin/release 1.0.0 --dry-run # preview without changing anything
+bin/release 0.1.5 --force   # downgrade / re-tag (use rarely)
+```
+
+The script:
+
+1. Validates the version (semver-ish; allows jumps in either direction
+   forward — refuses downgrades unless `--force`).
+2. Bumps `MARKETING_VERSION` and increments `CURRENT_PROJECT_VERSION`.
+3. Commits and tags `vX.Y.Z`.
+4. Pushes with `--follow-tags`.
+
+CI then asserts the tag matches the project's `MARKETING_VERSION`,
+builds Release, packages `pagerduty-menubar-X.Y.Z.zip`, and creates a
+GitHub Release with auto-generated notes.
+
 ## 🤝 Contributing
 
 Issues, ideas and PRs welcome. Open a discussion before large changes

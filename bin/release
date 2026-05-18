@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# bin/release — bump version, commit, tag, push.
+#
+# Usage:
+#   bin/release X.Y.Z               # bump to X.Y.Z (must be > current)
+#   bin/release X.Y.Z --force       # allow downgrades / re-tagging
+#   bin/release X.Y.Z --dry-run     # show what would happen
+#
+# CI picks up the tag (v<version>) and publishes a GitHub Release with the
+# packaged .app.zip attached. See .github/workflows/build.yml.
+
+set -euo pipefail
+
+FORCE=0
+DRY_RUN=0
+VERSION=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --force)   FORCE=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help)
+      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    -*)
+      echo "error: unknown flag $arg" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$VERSION" ]]; then
+        echo "error: multiple version arguments" >&2
+        exit 2
+      fi
+      VERSION="$arg"
+      ;;
+  esac
+done
+
+if [[ -z "$VERSION" ]]; then
+  echo "usage: bin/release <X.Y.Z> [--force] [--dry-run]" >&2
+  exit 2
+fi
+
+# Loose semver: X.Y.Z optionally followed by a -prerelease suffix.
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+  echo "error: '$VERSION' is not a valid semver-like version (e.g. 0.2.0, 1.0.0-rc1)" >&2
+  exit 2
+fi
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+# Ensure clean working tree (excluding untracked files we don't care about).
+if [[ -n "$(git status --porcelain -uno)" ]]; then
+  echo "error: working tree has uncommitted changes; commit or stash first" >&2
+  git status --short
+  exit 2
+fi
+
+# Ensure we're on main (avoid releasing from a stray branch).
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$BRANCH" != "main" && $FORCE -eq 0 ]]; then
+  echo "error: refusing to release from branch '$BRANCH' (use --force to override)" >&2
+  exit 2
+fi
+
+# Pull current MARKETING_VERSION via agvtool (reads project.pbxproj).
+CURRENT_MV="$(agvtool what-marketing-version -terse1 2>/dev/null | head -n1 || true)"
+CURRENT_BUILD="$(agvtool what-version -terse 2>/dev/null | head -n1 || true)"
+CURRENT_BUILD="${CURRENT_BUILD:-0}"
+
+echo "Current: $CURRENT_MV (build $CURRENT_BUILD)"
+echo "New:     $VERSION"
+
+# Block downgrades / same-version unless --force.
+semver_le() {
+  # returns 0 if $1 <= $2 (using sort -V)
+  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
+}
+if [[ -n "$CURRENT_MV" ]] && semver_le "$VERSION" "$CURRENT_MV" && [[ $FORCE -eq 0 ]]; then
+  echo "error: $VERSION is not greater than current $CURRENT_MV (use --force to override)" >&2
+  exit 2
+fi
+
+TAG="v$VERSION"
+if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1 && [[ $FORCE -eq 0 ]]; then
+  echo "error: tag $TAG already exists (use --force to recreate)" >&2
+  exit 2
+fi
+
+NEXT_BUILD=$((CURRENT_BUILD + 1))
+
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo "[dry-run] would set MARKETING_VERSION=$VERSION CURRENT_PROJECT_VERSION=$NEXT_BUILD"
+  echo "[dry-run] would commit and tag $TAG, then git push --follow-tags"
+  exit 0
+fi
+
+agvtool new-marketing-version "$VERSION" >/dev/null
+agvtool new-version -all "$NEXT_BUILD" >/dev/null
+
+git add pagerduty-menubar.xcodeproj/project.pbxproj
+git commit -m "Bump version to $VERSION (build $NEXT_BUILD)"
+
+if [[ $FORCE -eq 1 ]]; then
+  git tag -fa "$TAG" -m "Release $VERSION"
+  git push --force-with-lease origin "$TAG"
+  git push
+else
+  git tag -a "$TAG" -m "Release $VERSION"
+  git push --follow-tags
+fi
+
+echo "✓ Tagged $TAG and pushed. Watch the build at:"
+echo "  https://github.com/mattdholloway/pagerduty-menubar/actions"

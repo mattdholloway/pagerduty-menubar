@@ -21,10 +21,17 @@ jobs:
       - name: Resolve version
         id: vers
         run: |
+          PROJECT_MV=$(xcodebuild -project pagerduty-menubar.xcodeproj -scheme pagerduty-menubar -showBuildSettings -configuration Release \
+            | awk '/^[[:space:]]*MARKETING_VERSION/ {print $3; exit}')
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+            TAG_VER="${GITHUB_REF#refs/tags/v}"
+            if [[ "$TAG_VER" != "$PROJECT_MV" ]]; then
+              echo "::error::tag v$TAG_VER does not match project MARKETING_VERSION $PROJECT_MV. Did you forget to run bin/release?"
+              exit 1
+            fi
+            VERSION="$TAG_VER"
           else
-            VERSION="0.0.0-$(git rev-parse --short HEAD)"
+            VERSION="${PROJECT_MV}+$(git rev-parse --short HEAD)"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION"
@@ -38,8 +45,6 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            MARKETING_VERSION=${{ steps.vers.outputs.version }} \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             build
 
       - name: Package .app
