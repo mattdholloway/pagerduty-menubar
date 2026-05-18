@@ -1,0 +1,516 @@
+import SwiftUI
+import AppKit
+
+struct MenuView: View {
+    @EnvironmentObject private var store: OnCallStore
+    @Environment(\.openURL) private var openURL
+    @Environment(\.openSettings) private var openSettings
+
+    @State private var search: String = ""
+    @State private var expandedPolicies: Set<String> = []
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            content
+            Divider()
+            footer
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: store.menuBarSymbol)
+                .foregroundStyle(.tint)
+                .font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(headerTitle).font(.system(size: 13, weight: .semibold))
+                Text(headerSubtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                store.refresh()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Refresh now")
+            .disabled(!store.hasToken || store.state == .loading)
+
+            Button {
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var headerTitle: String {
+        if let me = store.me { return me.name }
+        return "PagerDuty"
+    }
+
+    private var headerSubtitle: String {
+        switch store.state {
+        case .idle: return store.hasToken ? "Ready" : "Add an API token in Settings"
+        case .loading: return "Refreshing…"
+        case .loaded(let date): return "Updated \(Self.relative.localizedString(for: date, relativeTo: Date()))"
+        case .failed(let msg): return msg
+        }
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        if !store.hasToken {
+            emptyState(
+                icon: "key.horizontal",
+                title: "No API token",
+                message: "Open Settings and paste a PagerDuty REST API user token.",
+                actionTitle: "Open Settings"
+            ) {
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+            }
+        } else if case .failed(let msg) = store.state, store.groups.isEmpty {
+            emptyState(
+                icon: "exclamationmark.triangle",
+                title: "Couldn't fetch on-calls",
+                message: msg,
+                actionTitle: "Try again",
+                action: { store.refresh() }
+            )
+        } else if store.groups.isEmpty && store.state == .loading {
+            VStack(spacing: 8) {
+                ProgressView()
+                Text("Loading on-calls…").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 32)
+        } else if store.groups.isEmpty {
+            emptyState(
+                icon: "person.2.slash",
+                title: "Nothing to show yet",
+                message: "No services or escalation policies found via your teams.",
+                actionTitle: "Refresh",
+                action: { store.refresh() }
+            )
+        } else {
+            VStack(spacing: 0) {
+                searchBar
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        myOnCallSection
+                        allGroupsSection
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                .frame(maxHeight: 460)
+            }
+        }
+    }
+
+    // MARK: - Search
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+            TextField("Filter services, people, or policies", text: $search)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+            if !search.isEmpty {
+                Button {
+                    search = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    // MARK: - Sections
+
+    @ViewBuilder
+    private var myOnCallSection: some View {
+        let mine = filteredGroups(store.myOnCallGroups)
+        if !mine.isEmpty {
+            sectionHeader(symbol: "bell.fill", title: "You're on call", count: mine.count, tint: .orange)
+            ForEach(mine) { group in
+                PolicyCard(
+                    group: group,
+                    meID: store.me?.id,
+                    expanded: expandedPolicies.contains(group.id),
+                    onToggle: { toggleExpanded(group.id) }
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var allGroupsSection: some View {
+        let all = filteredGroups(store.groups)
+        if !all.isEmpty {
+            sectionHeader(
+                symbol: "list.bullet.rectangle",
+                title: store.myOnCallGroups.isEmpty ? "Services & schedules" : "All services",
+                count: all.count,
+                tint: .secondary
+            )
+            ForEach(all) { group in
+                PolicyCard(
+                    group: group,
+                    meID: store.me?.id,
+                    expanded: expandedPolicies.contains(group.id),
+                    onToggle: { toggleExpanded(group.id) }
+                )
+            }
+        } else if !search.isEmpty {
+            Text("No matches for “\(search)”")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func sectionHeader(symbol: String, title: String, count: Int, tint: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).foregroundStyle(tint)
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text("\(count)")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.15), in: Capsule())
+            Spacer()
+        }
+    }
+
+    private func toggleExpanded(_ id: String) {
+        if expandedPolicies.contains(id) { expandedPolicies.remove(id) }
+        else { expandedPolicies.insert(id) }
+    }
+
+    private func filteredGroups(_ input: [EscalationPolicyGroup]) -> [EscalationPolicyGroup] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return input }
+        return input.filter { g in
+            if (g.policy.summary ?? "").lowercased().contains(q) { return true }
+            if g.services.contains(where: { $0.name.lowercased().contains(q) }) { return true }
+            if g.levels.contains(where: { $0.assignments.contains { ($0.user.summary ?? "").lowercased().contains(q) } }) { return true }
+            return false
+        }
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Button {
+                if let url = URL(string: "https://app.pagerduty.com") { openURL(url) }
+            } label: {
+                Label("Open PagerDuty", systemImage: "arrow.up.right.square")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 11))
+
+            Spacer()
+
+            Button {
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+            } label: {
+                Text("Settings")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 11))
+            .keyboardShortcut(",", modifiers: .command)
+
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Text("Quit")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 11))
+            .keyboardShortcut("q", modifiers: .command)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Empty state
+
+    private func emptyState(icon: String, title: String, message: String, actionTitle: String, action: @escaping () -> Void) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon).font(.system(size: 28)).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 13, weight: .semibold))
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(actionTitle, action: action)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity)
+    }
+
+    private static let relative: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+}
+
+// MARK: - Policy card
+
+private struct PolicyCard: View {
+    let group: EscalationPolicyGroup
+    let meID: String?
+    let expanded: Bool
+    let onToggle: () -> Void
+
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Button(action: onToggle) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12, height: 12)
+                }
+                .buttonStyle(.borderless)
+
+                Text(group.policy.summary ?? "Escalation policy")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if let url = group.policy.html_url, let u = URL(string: url) {
+                    Button {
+                        openURL(u)
+                    } label: {
+                        Image(systemName: "arrow.up.right.square").font(.system(size: 10))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open escalation policy in PagerDuty")
+                }
+            }
+
+            // Services chip row
+            if !group.services.isEmpty {
+                FlowLayout(spacing: 4) {
+                    ForEach(group.services) { svc in
+                        ServiceChip(service: svc)
+                    }
+                }
+            }
+
+            // Primary on-call row
+            if let primary = group.primaryLevel {
+                ForEach(primary.assignments) { a in
+                    AssignmentRow(assignment: a, level: primary.level, isMe: a.user.id == meID, isPrimary: true)
+                }
+            } else {
+                Text("No one currently on call")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Expanded escalation chain
+            if expanded, group.levels.count > 1 {
+                Divider().padding(.vertical, 2)
+                ForEach(group.levels.dropFirst()) { lvl in
+                    ForEach(lvl.assignments) { a in
+                        AssignmentRow(assignment: a, level: lvl.level, isMe: a.user.id == meID, isPrimary: false)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct ServiceChip: View {
+    let service: PDService
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            if let s = service.html_url, let u = URL(string: s) { openURL(u) }
+        } label: {
+            HStack(spacing: 3) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 6, height: 6)
+                Text(service.name).font(.system(size: 10))
+            }
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Color.secondary.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(service.html_url ?? service.name)
+    }
+
+    private var statusColor: Color {
+        switch service.status {
+        case "active": return .green
+        case "warning": return .yellow
+        case "critical", "maintenance": return .orange
+        case "disabled": return .gray
+        default: return .secondary
+        }
+    }
+}
+
+private struct AssignmentRow: View {
+    let assignment: OnCallAssignment
+    let level: Int
+    let isMe: Bool
+    let isPrimary: Bool
+
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Avatar(initials: initials(for: assignment.user.summary ?? "?"), highlighted: isMe)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(assignment.user.summary ?? "Unknown")
+                        .font(.system(size: 12, weight: isPrimary ? .medium : .regular))
+                        .lineLimit(1)
+                    if isMe {
+                        Text("You")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.2), in: Capsule())
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    LevelBadge(level: level)
+                }
+                if let sched = assignment.schedule?.summary {
+                    Text(sched).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer()
+            if let end = assignment.end {
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text("Until")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(Self.endFormatter.string(from: end))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .help(end.formatted(date: .complete, time: .shortened))
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let s = assignment.user.html_url, let u = URL(string: s) { openURL(u) }
+        }
+    }
+
+    private func initials(for name: String) -> String {
+        let parts = name.split(separator: " ").prefix(2)
+        let chars = parts.compactMap { $0.first.map(String.init) }
+        return chars.joined().uppercased()
+    }
+
+    private static let endFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.doesRelativeDateFormatting = true
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+}
+
+private struct Avatar: View {
+    let initials: String
+    let highlighted: Bool
+
+    var body: some View {
+        ZStack {
+            Circle().fill(highlighted ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.18))
+            Text(initials)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(highlighted ? Color.accentColor : .secondary)
+        }
+        .frame(width: 22, height: 22)
+    }
+}
+
+private struct LevelBadge: View {
+    let level: Int
+    var body: some View {
+        Text("L\(level)")
+            .font(.system(size: 9, weight: .bold))
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .background(level == 1 ? Color.orange.opacity(0.18) : Color.secondary.opacity(0.12), in: Capsule())
+            .foregroundStyle(level == 1 ? Color.orange : .secondary)
+    }
+}
+
+// MARK: - Flow layout for service chips
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxRowWidth: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                y += rowHeight + spacing
+                x = 0; rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            maxRowWidth = max(maxRowWidth, x)
+        }
+        return CGSize(width: maxRowWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let maxWidth = bounds.width
+        var x: CGFloat = bounds.minX, y: CGFloat = bounds.minY, rowHeight: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x - bounds.minX + size.width > maxWidth, x > bounds.minX {
+                y += rowHeight + spacing
+                x = bounds.minX
+                rowHeight = 0
+            }
+            sub.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
