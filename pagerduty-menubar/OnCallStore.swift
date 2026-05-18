@@ -274,7 +274,7 @@ final class OnCallStore: ObservableObject {
             return ""
         }
         let names = pinned.map { Self.firstName(of: $0.assignment.user.summary ?? "—") }
-        return Self.condense(names, maxLength: 24)
+        return Self.condense(names, maxLength: 40)
     }
 
     private static func firstName(of full: String) -> String {
