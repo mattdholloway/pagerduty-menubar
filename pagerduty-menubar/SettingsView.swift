@@ -3,6 +3,7 @@ import ServiceManagement
 
 struct SettingsView: View {
     @EnvironmentObject private var store: OnCallStore
+    @StateObject private var updater = UpdateChecker.shared
     @State private var tokenInput: String = ""
     @State private var revealToken: Bool = false
     @State private var savedMessage: String?
@@ -62,6 +63,23 @@ struct SettingsView: View {
                 }
 
                 Text("Create a REST API token in PagerDuty under your profile → User Settings → Create API User Token. The token is stored only in your macOS Keychain.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Updates") {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Current version: \(updater.currentVersion)")
+                        Text(updateStatusText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    updateActionView
+                }
+                Toggle("Automatically install updates in the background", isOn: $updater.autoInstall)
+                Text("When enabled, the app checks GitHub Releases every 24 h (and at launch) and installs the latest version automatically. The app will quit and relaunch when an update is applied.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -167,4 +185,40 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding()
     }
+
+    // MARK: - Update helpers
+
+    private var updateStatusText: String {
+        switch updater.status {
+        case .idle: return updater.lastCheckedAt.map { "Last checked \(Self.shortDate.string(from: $0))" } ?? "Not checked yet"
+        case .checking: return "Checking for updates…"
+        case .upToDate: return "You're on the latest version."
+        case .available(let r): return "Update available: \(r.version)"
+        case .downloading(let p): return String(format: "Downloading… %.0f%%", p * 100)
+        case .installing: return "Installing — the app will relaunch."
+        case .failed(let msg): return "Update failed: \(msg)"
+        }
+    }
+
+    @ViewBuilder
+    private var updateActionView: some View {
+        switch updater.status {
+        case .checking, .installing:
+            ProgressView().controlSize(.small)
+        case .downloading(let p):
+            ProgressView(value: p).frame(width: 120)
+        case .available(let r):
+            Button("Install \(r.version)") { Task { await updater.downloadAndInstall(r) } }
+                .buttonStyle(.borderedProminent)
+        default:
+            Button("Check now") { Task { _ = await updater.check() } }
+        }
+    }
+
+    private static let shortDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f
+    }()
 }

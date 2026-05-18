@@ -5,9 +5,8 @@ struct pagerduty_menubarApp: App {
     @StateObject private var store = OnCallStore()
 
     init() {
-        // Request notification permission once we're running.
         NotificationsCoordinator.shared.requestAuthorizationIfNeeded()
-        // Bridge notification actions to store mutations.
+        UpdateChecker.shared.startBackgroundChecks()
         NotificationCenter.default.addObserver(
             forName: NotificationsCoordinator.didRequestAcknowledge,
             object: nil,

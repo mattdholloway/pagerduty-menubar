@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# bin/make-dmg — package the built .app into a drag-to-install DMG.
+#
+# Usage: bin/make-dmg <path/to/pagerduty-menubar.app> <output.dmg> [VolumeName]
+#
+# Produces a UDZO-compressed .dmg containing:
+#   - <App>.app
+#   - Symlink to /Applications
+#
+# No background image / .DS_Store layout — keeps the script portable and
+# dependency-free. macOS shows the symlink as a real /Applications folder
+# in Finder, which makes drag-to-install obvious.
+
+set -euo pipefail
+
+APP_PATH="${1:?usage: bin/make-dmg <APP> <DMG> [VOLNAME]}"
+OUT_DMG="${2:?usage: bin/make-dmg <APP> <DMG> [VOLNAME]}"
+VOL_NAME="${3:-pagerduty-menubar}"
+
+if [[ ! -d "$APP_PATH" ]]; then
+  echo "error: $APP_PATH is not a directory (.app bundle)" >&2
+  exit 2
+fi
+
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+STAGE="$WORKDIR/stage"
+mkdir -p "$STAGE"
+cp -R "$APP_PATH" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+
+# Build a read/write DMG, then convert to compressed read-only.
+RW_DMG="$WORKDIR/rw.dmg"
+hdiutil create -volname "$VOL_NAME" \
+  -srcfolder "$STAGE" \
+  -ov -format UDRW "$RW_DMG" >/dev/null
+
+# (Optional layout step: mount, tweak .DS_Store, unmount. Skipped for
+# simplicity — drag-to-install is already obvious from the symlink.)
+
+rm -f "$OUT_DMG"
+hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$OUT_DMG" >/dev/null
+echo "Wrote $OUT_DMG"
+ls -lh "$OUT_DMG"
