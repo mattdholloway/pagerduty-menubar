@@ -110,6 +110,32 @@ final class OnCallStore: ObservableObject {
         }
     }
 
+    /// Test seam: build a store with pre-baked state, no Keychain access,
+    /// no timer, no network. Used only by the test bundle (internal).
+    init(
+        testMe: PDUser? = nil,
+        testGroups: [EscalationPolicyGroup] = [],
+        testMyPolicyIDs: Set<String> = [],
+        testCurrentByPolicy: [String: [PDOnCall]] = [:],
+        testUpcomingByPolicy: [String: [PDOnCall]] = [:],
+        testUpcomingByKey: [String: [PDOnCall]] = [:],
+        testPolicyOrder: [String] = [],
+        testHiddenPolicyIDs: Set<String> = [],
+        testPinnedKeys: [String] = []
+    ) {
+        self.hasToken = false
+        self.me = testMe
+        self.groups = testGroups
+        self.myPolicyIDs = testMyPolicyIDs
+        self.currentByPolicy = testCurrentByPolicy
+        self.upcomingByPolicy = testUpcomingByPolicy
+        self.upcomingByKey = testUpcomingByKey
+        self.policyOrder = testPolicyOrder
+        self.hiddenPolicyIDs = testHiddenPolicyIDs
+        self.pinnedKeys = testPinnedKeys
+        // Do NOT touch Keychain / UserDefaults / start timers.
+    }
+
     // MARK: - Policy visibility
 
     func isPolicyHidden(_ id: String) -> Bool { hiddenPolicyIDs.contains(id) }
@@ -285,14 +311,14 @@ final class OnCallStore: ObservableObject {
         return Self.condense(names, maxLength: 40)
     }
 
-    private static func firstName(of full: String) -> String {
+    static func firstName(of full: String) -> String {
         full.split(separator: " ").first.map(String.init) ?? full
     }
 
     /// Join names with " · ". If the joined string exceeds maxLength, drop the
     /// tail names and append "+N" so the menu bar stays compact regardless of
     /// how many schedules the user pins.
-    private static func condense(_ names: [String], maxLength: Int) -> String {
+    static func condense(_ names: [String], maxLength: Int) -> String {
         let separator = " · "
         var included: [String] = []
         for n in names {
@@ -428,11 +454,11 @@ final class OnCallStore: ObservableObject {
         }
     }
 
-    private static func upcomingKey(for oncall: PDOnCall) -> String {
+    static func upcomingKey(for oncall: PDOnCall) -> String {
         oncall.schedule?.id ?? "user:\(oncall.user.id)"
     }
 
-    private static func buildUpcomingIndexes(upcoming: [PDOnCall]) -> (byKey: [String: [PDOnCall]], byPolicy: [String: [PDOnCall]]) {
+    static func buildUpcomingIndexes(upcoming: [PDOnCall]) -> (byKey: [String: [PDOnCall]], byPolicy: [String: [PDOnCall]]) {
         var byKey: [String: [PDOnCall]] = [:]
         var byPolicy: [String: [PDOnCall]] = [:]
         for oc in upcoming {
@@ -474,7 +500,7 @@ final class OnCallStore: ObservableObject {
         orderedGroupsIncludingHidden.first { $0.id == policyID }
     }
 
-    private static func buildGroups(services: [PDService], onCalls: [PDOnCall], allPolicyRefs: [PDReference]) -> [EscalationPolicyGroup] {
+    static func buildGroups(services: [PDService], onCalls: [PDOnCall], allPolicyRefs: [PDReference]) -> [EscalationPolicyGroup] {
         var servicesByEP: [String: [PDService]] = [:]
         for service in services {
             guard let ep = service.escalation_policy else { continue }

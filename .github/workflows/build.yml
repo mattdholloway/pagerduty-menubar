@@ -36,6 +36,17 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION"
 
+      - name: Run tests
+        run: |
+          xcodebuild \
+            -project pagerduty-menubar.xcodeproj \
+            -scheme pagerduty-menubar \
+            -testPlan Tests \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
       - name: Build
         run: |
           xcodebuild \

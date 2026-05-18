@@ -1,0 +1,29 @@
+{
+  "configurations" : [
+    {
+      "id" : "0A0A0A0A-0000-0000-0000-000000000001",
+      "name" : "Default",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:pagerduty-menubar.xcodeproj",
+      "identifier" : "C9ED69452FBB429D005512F8",
+      "name" : "pagerduty-menubar"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:pagerduty-menubar.xcodeproj",
+        "identifier" : "AA00000000000000AA000003",
+        "name" : "pagerduty-menubarTests"
+      }
+    }
+  ],
+  "version" : 1
+}

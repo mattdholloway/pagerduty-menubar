@@ -82,11 +82,15 @@ actor PagerDutyAPI {
     private let base = URL(string: "https://api.pagerduty.com")!
     private let decoder: JSONDecoder
 
-    init() {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 20
-        cfg.waitsForConnectivity = true
-        self.session = URLSession(configuration: cfg)
+    init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            let cfg = URLSessionConfiguration.default
+            cfg.timeoutIntervalForRequest = 20
+            cfg.waitsForConnectivity = true
+            self.session = URLSession(configuration: cfg)
+        }
 
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { dec in
