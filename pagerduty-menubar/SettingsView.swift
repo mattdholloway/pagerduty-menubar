@@ -1,10 +1,13 @@
 import SwiftUI
+import ServiceManagement
 
 struct SettingsView: View {
     @EnvironmentObject private var store: OnCallStore
     @State private var tokenInput: String = ""
     @State private var revealToken: Bool = false
     @State private var savedMessage: String?
+    @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
+    @State private var loginError: String?
 
     var body: some View {
         Form {
@@ -61,6 +64,33 @@ struct SettingsView: View {
                 Text("Create a REST API token in PagerDuty under your profile → User Settings → Create API User Token. The token is stored only in your macOS Keychain.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Startup") {
+                Toggle("Launch automatically at login", isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { newValue in
+                        do {
+                            if newValue {
+                                try SMAppService.mainApp.register()
+                            } else {
+                                try SMAppService.mainApp.unregister()
+                            }
+                            launchAtLogin = SMAppService.mainApp.status == .enabled
+                            loginError = nil
+                        } catch {
+                            loginError = error.localizedDescription
+                            launchAtLogin = SMAppService.mainApp.status == .enabled
+                        }
+                    }
+                ))
+                if let err = loginError {
+                    Text(err).font(.caption).foregroundStyle(.red)
+                } else if SMAppService.mainApp.status == .requiresApproval {
+                    Text("Approval required — open System Settings → General → Login Items to enable.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("Refresh") {
