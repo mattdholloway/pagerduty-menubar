@@ -114,6 +114,7 @@ struct MenuView: View {
                         myUpcomingSection
                         myOnCallSection
                         allGroupsSection
+                        otherPoliciesSection
                         hiddenSection
                     }
                     .padding(.horizontal, 12)
@@ -223,7 +224,7 @@ struct MenuView: View {
         if !all.isEmpty {
             sectionHeader(
                 symbol: "list.bullet.rectangle",
-                title: store.myOnCallGroups.isEmpty ? "Services & schedules" : "All services",
+                title: "My policies",
                 count: all.count,
                 tint: .secondary
             )
@@ -231,12 +232,67 @@ struct MenuView: View {
                 PolicyCard(group: group, meID: store.me?.id, reorderable: search.isEmpty)
                     .environmentObject(store)
             }
-        } else if !search.isEmpty {
+        } else if !search.isEmpty && store.otherGroups.isEmpty {
             Text("No matches for “\(search)”")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var otherPoliciesSection: some View {
+        let all = store.otherGroups
+        if all.isEmpty { EmptyView() } else {
+            let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let matches = q.isEmpty ? [] : all.filter { g in
+                if (g.policy.summary ?? "").lowercased().contains(q) { return true }
+                if g.levels.contains(where: { $0.assignments.contains { ($0.user.summary ?? "").lowercased().contains(q) } }) { return true }
+                return false
+            }
+            let displayCount = q.isEmpty ? all.count : matches.count
+
+            sectionHeader(
+                symbol: "tray.full",
+                title: "Other policies",
+                count: displayCount,
+                tint: .secondary
+            )
+
+            if q.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                    Text("Type above to search \(all.count) other escalation polic\(all.count == 1 ? "y" : "ies") on this PagerDuty account.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 10)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            } else if matches.isEmpty {
+                Text("No other policies match “\(search)”")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 4) {
+                    ForEach(matches.prefix(20).map { $0 }) { group in
+                        OtherPolicyRow(group: group)
+                            .environmentObject(store)
+                    }
+                    if matches.count > 20 {
+                        Text("Showing 20 of \(matches.count) matches — refine the search to narrow further.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    }
+                }
+            }
         }
     }
 
@@ -926,4 +982,61 @@ private struct MyShiftRow: View {
         f.timeStyle = .short
         return f
     }()
+}
+
+private struct OtherPolicyRow: View {
+    let group: EscalationPolicyGroup
+    @EnvironmentObject private var store: OnCallStore
+    @Environment(\.openURL) private var openURL
+    @State private var showCalendar = false
+
+    private var primaryUser: String? {
+        group.primaryLevel?.assignments.first?.user.summary
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "person.2.circle")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(group.policy.summary ?? "Escalation policy")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Text(primaryUser.map { "Primary: \($0)" } ?? "No one currently on call")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                showCalendar.toggle()
+            } label: {
+                Image(systemName: "calendar")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Show schedule calendar")
+            .popover(isPresented: $showCalendar, arrowEdge: .trailing) {
+                CalendarPopoverView(policyID: group.id)
+                    .environmentObject(store)
+            }
+            if let url = group.policy.html_url, let u = URL(string: url) {
+                Button {
+                    openURL(u)
+                } label: {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Open in PagerDuty")
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
 }

@@ -45,6 +45,12 @@ private struct ServicesEnvelope: Decodable {
     let more: Bool?
     let offset: Int?
 }
+private struct EscalationPoliciesEnvelope: Decodable {
+    struct EP: Decodable { let id: String; let name: String; let html_url: String? }
+    let escalation_policies: [EP]
+    let more: Bool?
+}
+
 private struct OnCallsEnvelope: Decodable {
     let oncalls: [PDOnCall]
     let more: Bool?
@@ -123,6 +129,28 @@ actor PagerDutyAPI {
             all.append(contentsOf: env.services)
             if env.more == true { offset += limit } else { break }
             if offset > 1000 { break } // safety
+        }
+        return all
+    }
+
+    /// All escalation policies on the account (paginated). Used to surface
+    /// 'Other policies' the user isn't directly associated with.
+    func allEscalationPolicies(token: String) async throws -> [PDReference] {
+        var all: [PDReference] = []
+        var offset = 0
+        let limit = 100
+        while true {
+            let items: [URLQueryItem] = [
+                URLQueryItem(name: "limit", value: String(limit)),
+                URLQueryItem(name: "offset", value: String(offset)),
+            ]
+            let url = base.appending(path: "/escalation_policies").appending(queryItems: items)
+            let env: EscalationPoliciesEnvelope = try await get(url: url, token: token)
+            for ep in env.escalation_policies {
+                all.append(PDReference(id: ep.id, summary: ep.name, html_url: ep.html_url, type: "escalation_policy_reference"))
+            }
+            if env.more == true { offset += limit } else { break }
+            if offset > 5000 { break }
         }
         return all
     }

@@ -134,15 +134,23 @@ final class OnCallStore: ObservableObject {
         orderedGroupsIncludingHidden.filter { hiddenPolicyIDs.contains($0.id) }
     }
 
-    /// Visible groups in user-preferred order.
+    /// Visible groups in user-preferred order (MY policies only — the ones
+    /// attached to services owned by my teams).
     var orderedGroups: [EscalationPolicyGroup] {
-        orderedGroupsIncludingHidden.filter { !hiddenPolicyIDs.contains($0.id) }
+        orderedGroupsIncludingHidden.filter { myPolicyIDs.contains($0.id) && !hiddenPolicyIDs.contains($0.id) }
+    }
+
+    /// Other escalation policies on the account (not tied to my teams).
+    /// Always sorted alphabetically; not subject to drag-reorder.
+    var otherGroups: [EscalationPolicyGroup] {
+        groups.filter { !myPolicyIDs.contains($0.id) }
+            .sorted { ($0.policy.summary ?? "") < ($1.policy.summary ?? "") }
     }
 
     /// Public read-only view of the full ordered list (including hidden groups)
-    /// for use in Settings reordering UI.
+    /// for use in Settings reordering UI. Only includes 'my' groups.
     var orderedGroupsIncludingHiddenPublic: [EscalationPolicyGroup] {
-        orderedGroupsIncludingHidden
+        orderedGroupsIncludingHidden.filter { myPolicyIDs.contains($0.id) }
     }
 
     private var orderedGroupsIncludingHidden: [EscalationPolicyGroup] {
@@ -370,6 +378,7 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var upcomingByKey: [String: [PDOnCall]] = [:]
     @Published private(set) var upcomingByPolicy: [String: [PDOnCall]] = [:]
     @Published private(set) var currentByPolicy: [String: [PDOnCall]] = [:]
+    @Published private(set) var myPolicyIDs: Set<String> = []
 
     private func performRefresh() async {
         guard let token = KeychainStore.loadToken() else {
@@ -381,19 +390,26 @@ final class OnCallStore: ObservableObject {
         do {
             let me = try await api.currentUser(token: token)
             let teamIDs = (me.teams ?? []).map { $0.id }
-            let services = try await api.services(token: token, teamIDs: teamIDs)
-            let policyIDs = Array(Set(services.compactMap { $0.escalation_policy?.id }))
+
+            // Fan out independent requests in parallel.
+            async let servicesTask = api.services(token: token, teamIDs: teamIDs)
+            async let allPoliciesTask = api.allEscalationPolicies(token: token)
+            let services = try await servicesTask
+            let allPolicies = try await allPoliciesTask
+
+            let myEPIDs = Set(services.compactMap { $0.escalation_policy?.id })
+            let allEPIDs = Set(allPolicies.map(\.id)).union(myEPIDs)
+
             let now = Date()
             let until = Calendar.current.date(byAdding: .day, value: Self.lookaheadDays, to: now) ?? now.addingTimeInterval(7 * 86400)
-            let windowed = try await api.onCalls(token: token, escalationPolicyIDs: policyIDs, since: now, until: until)
+            let windowed = try await api.onCalls(token: token, escalationPolicyIDs: Array(allEPIDs), since: now, until: until)
 
-            // Current = overlapping "now". Upcoming = starts strictly after now.
             let current = windowed.filter { oc in
                 (oc.start.map { $0 <= now } ?? true) && (oc.end.map { $0 > now } ?? true)
             }
             let upcoming = windowed.filter { ($0.start ?? .distantPast) > now }
 
-            let groups = Self.buildGroups(services: services, onCalls: current)
+            let groups = Self.buildGroups(services: services, onCalls: current, allPolicyRefs: allPolicies)
             let (byKey, upByPolicy) = Self.buildUpcomingIndexes(upcoming: upcoming)
             var curByPolicy: [String: [PDOnCall]] = [:]
             for oc in current {
@@ -401,6 +417,7 @@ final class OnCallStore: ObservableObject {
             }
 
             self.me = me
+            self.myPolicyIDs = myEPIDs
             self.groups = groups
             self.upcomingByKey = byKey
             self.upcomingByPolicy = upByPolicy
@@ -457,24 +474,29 @@ final class OnCallStore: ObservableObject {
         orderedGroupsIncludingHidden.first { $0.id == policyID }
     }
 
-    private static func buildGroups(services: [PDService], onCalls: [PDOnCall]) -> [EscalationPolicyGroup] {
-        // Index services by escalation policy id.
+    private static func buildGroups(services: [PDService], onCalls: [PDOnCall], allPolicyRefs: [PDReference]) -> [EscalationPolicyGroup] {
         var servicesByEP: [String: [PDService]] = [:]
         for service in services {
             guard let ep = service.escalation_policy else { continue }
             servicesByEP[ep.id, default: []].append(service)
         }
 
-        // Group on-calls by EP, then by level.
         var ocByEP: [String: [PDOnCall]] = [:]
         var epRefs: [String: PDReference] = [:]
         for oc in onCalls {
             ocByEP[oc.escalation_policy.id, default: []].append(oc)
             epRefs[oc.escalation_policy.id] = oc.escalation_policy
         }
+        // Seed refs from the canonical EP list so EPs with no current shifts
+        // still appear (under 'Other policies').
+        for ref in allPolicyRefs where epRefs[ref.id] == nil {
+            epRefs[ref.id] = ref
+        }
 
-        // Build groups for every EP we have services for.
-        let allEPIDs = Set(servicesByEP.keys).union(ocByEP.keys)
+        let allEPIDs = Set(servicesByEP.keys)
+            .union(ocByEP.keys)
+            .union(allPolicyRefs.map(\.id))
+
         var groups: [EscalationPolicyGroup] = []
         for epID in allEPIDs {
             let policyRef = epRefs[epID]
