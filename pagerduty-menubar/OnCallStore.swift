@@ -548,6 +548,10 @@ final class OnCallStore: ObservableObject {
     /// to MINE only — same as the main refresh — to keep request volume low.
     func refreshIncidents() async {
         guard let token = KeychainStore.loadToken(), let me = self.me else { return }
+        // Throttle when PagerDuty is signalling we're close to the limit.
+        if let rl = await api.lastRateLimit, rl.remaining < 100, rl.reset > Date() {
+            return
+        }
         let myServiceIDs = groups.filter { myPolicyIDs.contains($0.id) }.flatMap { $0.services.map(\.id) }
         do {
             async let assignedTask = api.incidents(token: token, userIDs: [me.id])

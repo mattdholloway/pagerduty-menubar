@@ -91,6 +91,7 @@ enum PDError: LocalizedError {
     case http(Int, String)
     case decoding(String)
     case transport(String)
+    case rateLimited(retryAfter: TimeInterval)
 
     var errorDescription: String? {
         switch self {
@@ -98,8 +99,16 @@ enum PDError: LocalizedError {
         case .http(let code, let msg): return "PagerDuty API error \(code): \(msg)"
         case .decoding(let msg): return "Failed to decode response: \(msg)"
         case .transport(let msg): return "Network error: \(msg)"
+        case .rateLimited(let retry): return "Rate limited by PagerDuty — retrying in \(Int(retry.rounded()))s."
         }
     }
+}
+
+/// Snapshot of the most recent rate-limit headers returned by PagerDuty.
+struct PDRateLimit: Equatable, Sendable {
+    let remaining: Int
+    let reset: Date
+    let observedAt: Date
 }
 
 // MARK: - Client
@@ -108,6 +117,25 @@ actor PagerDutyAPI {
     private let session: URLSession
     private let base = URL(string: "https://api.pagerduty.com")!
     private let decoder: JSONDecoder
+
+    /// Conditional-request cache. Keyed by canonical URL string.
+    private struct CachedResponse {
+        let etag: String
+        let data: Data
+    }
+    private var etagCache: [String: CachedResponse] = [:]
+
+    /// Last-known rate-limit headers. Surfaced for clients that want to
+    /// throttle proactively.
+    private(set) var lastRateLimit: PDRateLimit?
+
+    /// When set in the future, every request will short-circuit with
+    /// `PDError.rateLimited` until that moment passes. Set when we get a
+    /// 429 with a `Retry-After` header.
+    private var blockedUntil: Date?
+
+    /// Consecutive transport-failure count, used for exponential backoff.
+    private var transportFailures: Int = 0
 
     init(session: URLSession? = nil) {
         if let session {
@@ -261,34 +289,104 @@ actor PagerDutyAPI {
     // MARK: - Internal
 
     private func get<T: Decodable>(url: URL, token: String) async throws -> T {
+        try await waitIfBlocked()
+        try await backoffIfNeeded()
+
+        let key = url.absoluteString
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/vnd.pagerduty+json;version=2", forHTTPHeaderField: "Accept")
         req.setValue("Token token=\(token)", forHTTPHeaderField: "Authorization")
+        if let cached = etagCache[key] {
+            req.setValue(cached.etag, forHTTPHeaderField: "If-None-Match")
+        }
 
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: req)
         } catch {
+            transportFailures += 1
             throw PDError.transport(error.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else {
+            transportFailures += 1
             throw PDError.transport("Non-HTTP response")
         }
+        transportFailures = 0
+        absorbRateLimitHeaders(http)
+
+        // 304 Not Modified — reuse the cached body.
+        if http.statusCode == 304, let cached = etagCache[key] {
+            do {
+                return try decoder.decode(T.self, from: cached.data)
+            } catch {
+                // Cached data went stale somehow; drop and force-refresh next call.
+                etagCache[key] = nil
+                throw PDError.decoding(String(describing: error))
+            }
+        }
+
         guard (200...299).contains(http.statusCode) else {
+            if http.statusCode == 429 {
+                let retry = retryAfterSeconds(from: http) ?? 30
+                blockedUntil = Date().addingTimeInterval(retry)
+                throw PDError.rateLimited(retryAfter: retry)
+            }
             let body = String(data: data, encoding: .utf8) ?? ""
             let snippet = body.count > 200 ? String(body.prefix(200)) + "…" : body
-            if http.statusCode == 429 {
-                throw PDError.http(429, "Rate limited by PagerDuty — try again in a minute.")
-            }
             throw PDError.http(http.statusCode, snippet)
         }
+
+        if let etag = http.value(forHTTPHeaderField: "ETag") {
+            etagCache[key] = CachedResponse(etag: etag, data: data)
+        }
+
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
             throw PDError.decoding(String(describing: error))
         }
+    }
+
+    private func waitIfBlocked() async throws {
+        guard let until = blockedUntil, until > Date() else {
+            if blockedUntil != nil { blockedUntil = nil }
+            return
+        }
+        let wait = until.timeIntervalSinceNow
+        throw PDError.rateLimited(retryAfter: wait)
+    }
+
+    private func backoffIfNeeded() async {
+        guard transportFailures > 0 else { return }
+        // 1s, 2s, 4s, 8s, 16s, 30s (capped).
+        let delay = min(30.0, pow(2.0, Double(transportFailures - 1)))
+        let ns = UInt64(delay * 1_000_000_000)
+        try? await Task.sleep(nanoseconds: ns)
+    }
+
+    private func absorbRateLimitHeaders(_ http: HTTPURLResponse) {
+        let remStr = http.value(forHTTPHeaderField: "X-RateLimit-Remaining")
+            ?? http.value(forHTTPHeaderField: "X-Rate-Limit-Remaining")
+        let resetStr = http.value(forHTTPHeaderField: "X-RateLimit-Reset")
+            ?? http.value(forHTTPHeaderField: "X-Rate-Limit-Reset")
+        guard let remStr, let remaining = Int(remStr) else { return }
+        let reset: Date = {
+            if let s = resetStr, let secs = Double(s) {
+                // PagerDuty returns seconds-until-reset, not epoch.
+                return Date().addingTimeInterval(secs)
+            }
+            return Date().addingTimeInterval(60)
+        }()
+        lastRateLimit = PDRateLimit(remaining: remaining, reset: reset, observedAt: Date())
+    }
+
+    private func retryAfterSeconds(from http: HTTPURLResponse) -> TimeInterval? {
+        guard let v = http.value(forHTTPHeaderField: "Retry-After") else { return nil }
+        if let secs = TimeInterval(v) { return secs }
+        // Per RFC, Retry-After may also be an HTTP-date — we don't handle that case.
+        return nil
     }
 
     private func put<T: Decodable>(url: URL, token: String, from email: String, body: Data) async throws -> T {

@@ -238,3 +238,77 @@ extension PagerDutyAPITests {
         XCTAssertEqual(req["Accept"], "application/vnd.pagerduty+json;version=2")
     }
 }
+
+// MARK: - ETag + rate limit
+
+extension PagerDutyAPITests {
+
+    func test_etag_isReturnedOnFirstCallAndSentOnSecond() async throws {
+        let body = #"{"user":{"id":"PXXX","name":"Alice","email":null,"html_url":null,"avatar_url":null,"time_zone":null,"teams":null}}"#
+        StubURLProtocol.register(
+            { $0.path == "/users/me" },
+            response: .init(status: 200, body: Data(body.utf8),
+                            headers: ["Content-Type": "application/json", "ETag": "W/\"abc123\""])
+        )
+        let api = PagerDutyAPI(session: .stubbed())
+        _ = try await api.currentUser(token: "t")
+
+        // Second call must send the cached ETag back via If-None-Match.
+        // Register a fresh 304 stub so the call succeeds and reuses cache.
+        StubURLProtocol.register(
+            { $0.path == "/users/me" },
+            response: .init(status: 304, body: Data(),
+                            headers: ["ETag": "W/\"abc123\""])
+        )
+        _ = try await api.currentUser(token: "t")
+
+        let secondHeaders = StubURLProtocol.capturedHeaders().dropFirst().first ?? [:]
+        XCTAssertEqual(secondHeaders["If-None-Match"], "W/\"abc123\"")
+    }
+
+    func test_rateLimit_429setsBlockedWindow_andSecondCallShortCircuits() async throws {
+        // First request: 429 with Retry-After=1.
+        StubURLProtocol.register(
+            { $0.path == "/users/me" },
+            response: .init(status: 429, body: Data("{}".utf8),
+                            headers: ["Retry-After": "1"])
+        )
+        let api = PagerDutyAPI(session: .stubbed())
+        do {
+            _ = try await api.currentUser(token: "t")
+            XCTFail("expected rateLimited error")
+        } catch let PDError.rateLimited(retry) {
+            XCTAssertGreaterThan(retry, 0)
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+
+        // Second immediate request should be short-circuited (still in the
+        // block window), so we shouldn't even hit the network.
+        let before = StubURLProtocol.capturedURLs().count
+        do {
+            _ = try await api.currentUser(token: "t")
+            XCTFail("expected rateLimited error")
+        } catch PDError.rateLimited {
+            XCTAssertEqual(StubURLProtocol.capturedURLs().count, before, "no new request should have been made while blocked")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+    }
+
+    func test_rateLimitHeaders_areRecordedAfterSuccess() async throws {
+        let body = #"{"user":{"id":"PXXX","name":"Alice","email":null,"html_url":null,"avatar_url":null,"time_zone":null,"teams":null}}"#
+        StubURLProtocol.register(
+            { $0.path == "/users/me" },
+            response: .init(status: 200, body: Data(body.utf8),
+                            headers: ["Content-Type": "application/json",
+                                      "X-RateLimit-Remaining": "42",
+                                      "X-RateLimit-Reset": "30"])
+        )
+        let api = PagerDutyAPI(session: .stubbed())
+        _ = try await api.currentUser(token: "t")
+        let snapshot = await api.lastRateLimit
+        XCTAssertEqual(snapshot?.remaining, 42)
+        XCTAssertNotNil(snapshot?.reset)
+    }
+}
