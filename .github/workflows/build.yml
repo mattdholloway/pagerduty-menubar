@@ -1,0 +1,37 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project pagerduty-menubar.xcodeproj \
+            -scheme pagerduty-menubar \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package .app
+        run: |
+          cd build/Build/Products/Release
+          ditto -c -k --sequesterRsrc --keepParent pagerduty-menubar.app pagerduty-menubar.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pagerduty-menubar-${{ github.sha }}
+          path: build/Build/Products/Release/pagerduty-menubar.zip
+          retention-days: 14
