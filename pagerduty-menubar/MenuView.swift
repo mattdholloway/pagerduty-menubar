@@ -111,6 +111,7 @@ struct MenuView: View {
                 Divider()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        myUpcomingSection
                         myOnCallSection
                         allGroupsSection
                         hiddenSection
@@ -118,7 +119,7 @@ struct MenuView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 }
-                .frame(minHeight: 360, maxHeight: 720)
+                .frame(minHeight: 420, maxHeight: 820)
             }
         }
     }
@@ -147,6 +148,33 @@ struct MenuView: View {
     }
 
     // MARK: - Sections
+
+    @ViewBuilder
+    private var myUpcomingSection: some View {
+        let shifts = filteredShifts(store.myUpcomingShifts)
+        if !shifts.isEmpty {
+            sectionHeader(
+                symbol: "person.crop.circle.badge.clock",
+                title: "Your on-call schedule",
+                count: shifts.count,
+                tint: .accentColor
+            )
+            VStack(spacing: 4) {
+                ForEach(shifts) { shift in
+                    MyShiftRow(shift: shift)
+                }
+            }
+        }
+    }
+
+    private func filteredShifts(_ input: [MyShift]) -> [MyShift] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return input }
+        return input.filter {
+            ($0.policySummary ?? "").lowercased().contains(q) ||
+            ($0.schedule?.summary ?? "").lowercased().contains(q)
+        }
+    }
 
     @ViewBuilder
     private var myOnCallSection: some View {
@@ -297,27 +325,35 @@ private struct PolicyCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .center, spacing: 6) {
                 if reorderable {
-                    Button {
-                        store.nudgePolicy(group.id, by: -1)
-                    } label: {
-                        Image(systemName: "chevron.up").font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(!store.canMovePolicy(group.id, by: -1))
-                    .help("Move up")
+                    VStack(spacing: 1) {
+                        Button {
+                            store.nudgePolicy(group.id, by: -1)
+                        } label: {
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 18, height: 12)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!store.canMovePolicy(group.id, by: -1))
+                        .help("Move up")
 
-                    Button {
-                        store.nudgePolicy(group.id, by: 1)
-                    } label: {
-                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
+                        Button {
+                            store.nudgePolicy(group.id, by: 1)
+                        } label: {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .bold))
+                                .frame(width: 18, height: 12)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!store.canMovePolicy(group.id, by: 1))
+                        .help("Move down")
                     }
-                    .buttonStyle(.borderless)
-                    .disabled(!store.canMovePolicy(group.id, by: 1))
-                    .help("Move down")
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 2)
                 }
                 Text(group.policy.summary ?? "Escalation policy")
                     .font(.system(size: 12, weight: .semibold))
@@ -756,4 +792,109 @@ private struct FlowLayout: Layout {
             rowHeight = max(rowHeight, size.height)
         }
     }
+}
+
+private struct MyShiftRow: View {
+    let shift: MyShift
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(tint.opacity(shift.isCurrent ? 0.9 : 0.18))
+                    .frame(width: 24, height: 24)
+                Image(systemName: shift.isCurrent ? "bell.fill" : "calendar")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(shift.isCurrent ? Color.white : tint)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(shift.policySummary ?? "Escalation policy")
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    RoleBadge(level: shift.level, compact: true)
+                }
+                Text(captionText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(shift.isCurrent ? "On call now" : startLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(shift.isCurrent ? Color.orange : .primary)
+                if let dur = durationLabel {
+                    Text(dur)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(shift.isCurrent ? Color.orange.opacity(0.12) : Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(shift.isCurrent ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
+                )
+        )
+    }
+
+    private var tint: Color {
+        switch shift.level {
+        case 1: return .orange
+        case 2: return .blue
+        case 3: return .purple
+        default: return .secondary
+        }
+    }
+
+    private var captionText: String {
+        var parts: [String] = []
+        if let sched = shift.schedule?.summary { parts.append(sched) }
+        if let end = shift.end {
+            parts.append("until \(Self.short.string(from: end))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var startLabel: String {
+        guard let s = shift.start else { return "—" }
+        let cal = Calendar.current
+        if cal.isDateInToday(s) || cal.isDateInTomorrow(s) {
+            return Self.short.string(from: s)
+        }
+        let days = cal.dateComponents([.day], from: Date(), to: s).day ?? 0
+        if days < 7 {
+            let dow = DateFormatter(); dow.dateFormat = "EEE"
+            let t = DateFormatter(); t.timeStyle = .short; t.dateStyle = .none
+            return "\(dow.string(from: s)) \(t.string(from: s))"
+        }
+        return Self.short.string(from: s)
+    }
+
+    private var durationLabel: String? {
+        guard let s = shift.start, let e = shift.end else { return nil }
+        let secs = e.timeIntervalSince(max(s, Date()))
+        if secs <= 0 { return nil }
+        let hours = Int(secs / 3600)
+        if hours < 24 {
+            return shift.isCurrent ? "\(hours)h left" : "\(hours)h shift"
+        }
+        let days = hours / 24
+        let leftover = hours % 24
+        let label = leftover == 0 ? "\(days)d" : "\(days)d \(leftover)h"
+        return shift.isCurrent ? "\(label) left" : "\(label) shift"
+    }
+
+    private static let short: DateFormatter = {
+        let f = DateFormatter()
+        f.doesRelativeDateFormatting = true
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
 }

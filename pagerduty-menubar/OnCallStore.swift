@@ -53,6 +53,17 @@ struct HiddenAssignment: Identifiable, Hashable {
     var id: String { "\(policy.id)-\(assignment.id)" }
 }
 
+struct MyShift: Identifiable, Hashable {
+    let policyID: String
+    let policySummary: String?
+    let level: Int
+    let schedule: PDReference?
+    let start: Date?
+    let end: Date?
+    let isCurrent: Bool
+    var id: String { "\(policyID)-\(level)-\(schedule?.id ?? "direct")-\(start?.timeIntervalSince1970 ?? 0)" }
+}
+
 // MARK: - Store
 
 @MainActor
@@ -216,6 +227,42 @@ final class OnCallStore: ObservableObject {
             }
         }
         return pinnedKeys.compactMap { byKey[$0] }
+    }
+
+    /// My upcoming shifts across every escalation policy in the lookahead window,
+    /// sorted chronologically. Includes the current shift first if I'm on call now.
+    var myUpcomingShifts: [MyShift] {
+        guard let me else { return [] }
+        var result: [MyShift] = []
+        // Currently on call now: surface as "Now" entries first.
+        for (policyID, list) in currentByPolicy {
+            for oc in list where oc.user.id == me.id {
+                let policySummary = oc.escalation_policy.summary ?? policyGroup(for: policyID)?.policy.summary
+                result.append(MyShift(
+                    policyID: policyID,
+                    policySummary: policySummary,
+                    level: oc.escalation_level,
+                    schedule: oc.schedule,
+                    start: oc.start,
+                    end: oc.end,
+                    isCurrent: true
+                ))
+            }
+        }
+        for (_, list) in upcomingByPolicy {
+            for oc in list where oc.user.id == me.id {
+                result.append(MyShift(
+                    policyID: oc.escalation_policy.id,
+                    policySummary: oc.escalation_policy.summary,
+                    level: oc.escalation_level,
+                    schedule: oc.schedule,
+                    start: oc.start,
+                    end: oc.end,
+                    isCurrent: false
+                ))
+            }
+        }
+        return result.sorted { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
     }
 
     // MARK: - Derived UI helpers
