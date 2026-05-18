@@ -119,6 +119,12 @@ final class OnCallStore: ObservableObject {
         orderedGroupsIncludingHidden.filter { !hiddenPolicyIDs.contains($0.id) }
     }
 
+    /// Public read-only view of the full ordered list (including hidden groups)
+    /// for use in Settings reordering UI.
+    var orderedGroupsIncludingHiddenPublic: [EscalationPolicyGroup] {
+        orderedGroupsIncludingHidden
+    }
+
     private var orderedGroupsIncludingHidden: [EscalationPolicyGroup] {
         let byID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
         var seen = Set<String>()
@@ -154,6 +160,12 @@ final class OnCallStore: ObservableObject {
         policyOrder = []
         policyOrderRaw = ""
         objectWillChange.send()
+    }
+
+    /// Replace the entire policy ordering. Useful for List.onMove handlers
+    /// that compute the new order in one step.
+    func setOrder(_ order: [String]) {
+        persistPolicyOrder(order)
     }
 
     /// Move the policy with `id` one slot up (toward index 0) or down. No-op if at the edge.

@@ -71,6 +71,45 @@ struct SettingsView: View {
                     .disabled(!store.hasToken)
             }
 
+            Section("Reorder services") {
+                if store.groups.isEmpty {
+                    Text("Reorder will appear here once services have loaded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    List {
+                        ForEach(store.orderedGroupsIncludingHiddenPublic, id: \.id) { group in
+                            HStack(spacing: 6) {
+                                Image(systemName: "line.3.horizontal")
+                                    .foregroundStyle(.secondary)
+                                Text(group.policy.summary ?? "Escalation policy")
+                                if store.isPolicyHidden(group.id) {
+                                    Text("Hidden")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .padding(.horizontal, 4).padding(.vertical, 1)
+                                        .background(Color.secondary.opacity(0.18), in: Capsule())
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text("\(group.services.count) svc")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .onMove { source, destination in
+                            var ids = store.orderedGroupsIncludingHiddenPublic.map(\.id)
+                            ids.move(fromOffsets: source, toOffset: destination)
+                            store.setOrder(ids)
+                        }
+                    }
+                    .frame(minHeight: 160, maxHeight: 240)
+                    .listStyle(.bordered)
+                }
+                Text("Drag to reorder. The order applies to the menu (drag-and-drop in the menu bar popover is unreliable; use the up/down arrows there).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Visibility") {
                 HStack {
                     Text("Hidden services: \(store.hiddenPolicyCount)")

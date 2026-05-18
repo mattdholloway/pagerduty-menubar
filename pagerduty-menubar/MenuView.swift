@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 
 struct MenuView: View {
     @EnvironmentObject private var store: OnCallStore
@@ -294,18 +293,11 @@ private struct PolicyCard: View {
 
     @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
-    @State private var isDropTargeted: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if reorderable {
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary.opacity(0.7))
-                        .frame(width: 12, height: 12)
-                        .help("Drag to reorder")
-
                     Button {
                         store.nudgePolicy(group.id, by: -1)
                     } label: {
@@ -403,19 +395,7 @@ private struct PolicyCard: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.primary.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isDropTargeted ? Color.accentColor : Color.clear, lineWidth: 2)
-                )
         )
-        .modifier(ReorderModifier(
-            enabled: reorderable,
-            id: group.id,
-            isTargeted: $isDropTargeted,
-            onDrop: { sourceID in
-                store.movePolicy(sourceID, relativeTo: group.id, before: true)
-            }
-        ))
     }
 }
 
@@ -491,35 +471,6 @@ private struct CompactAssignmentRow: View {
         f.doesRelativeDateFormatting = true
         return f
     }()
-}
-
-private struct ReorderModifier: ViewModifier {
-    let enabled: Bool
-    let id: String
-    @Binding var isTargeted: Bool
-    let onDrop: (String) -> Void
-
-    func body(content: Content) -> some View {
-        if enabled {
-            content
-                .onDrag {
-                    NSItemProvider(object: id as NSString)
-                }
-                .onDrop(
-                    of: [.text, .utf8PlainText, .plainText],
-                    isTargeted: $isTargeted
-                ) { providers in
-                    guard let provider = providers.first else { return false }
-                    _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
-                        guard let str = obj as? String, str != id else { return }
-                        Task { @MainActor in onDrop(str) }
-                    }
-                    return true
-                }
-        } else {
-            content
-        }
-    }
 }
 
 private struct HiddenPolicyRow: View {
