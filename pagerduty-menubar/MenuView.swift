@@ -185,26 +185,15 @@ struct MenuView: View {
 
     @ViewBuilder
     private var hiddenSection: some View {
-        let hidden = filteredHidden(store.hiddenAssignments)
+        let hidden = filteredGroups(store.hiddenPolicies)
         if !hidden.isEmpty {
-            sectionHeader(symbol: "eye.slash", title: "Hidden", count: hidden.count, tint: .secondary)
-            VStack(spacing: 4) {
-                ForEach(hidden) { h in
-                    HiddenAssignmentRow(item: h)
+            sectionHeader(symbol: "eye.slash", title: "Hidden services", count: hidden.count, tint: .secondary)
+            VStack(spacing: 6) {
+                ForEach(hidden) { group in
+                    HiddenPolicyRow(group: group)
                         .environmentObject(store)
                 }
             }
-        }
-    }
-
-    private func filteredHidden(_ input: [HiddenAssignment]) -> [HiddenAssignment] {
-        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return input }
-        return input.filter { h in
-            if (h.policy.summary ?? "").lowercased().contains(q) { return true }
-            if (h.assignment.user.summary ?? "").lowercased().contains(q) { return true }
-            if (h.assignment.schedule?.summary ?? "").lowercased().contains(q) { return true }
-            return false
         }
     }
 
@@ -331,6 +320,15 @@ private struct PolicyCard: View {
                     .buttonStyle(.borderless)
                     .help("Open escalation policy in PagerDuty")
                 }
+
+                Button {
+                    store.setPolicyHidden(group.id, hidden: true)
+                } label: {
+                    Image(systemName: "eye.slash").font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Hide this service")
             }
 
             if !group.services.isEmpty {
@@ -343,13 +341,12 @@ private struct PolicyCard: View {
 
             // Primary level — full-detail rows
             if let primary = group.primaryLevel {
-                let rows = visibleAssignments(in: primary)
-                if rows.isEmpty {
-                    Text("All schedules at the primary level are hidden")
-                        .font(.system(size: 10))
+                if primary.assignments.isEmpty {
+                    Text("No one currently on call")
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(rows) { a in
+                    ForEach(primary.assignments) { a in
                         AssignmentRow(
                             assignment: a,
                             level: primary.level,
@@ -366,17 +363,13 @@ private struct PolicyCard: View {
 
             // Non-primary levels — always shown, compact one-liners
             let escalation = group.levels.dropFirst()
-                .map { level -> (Int, [OnCallAssignment]) in
-                    (level.level, visibleAssignments(in: level))
-                }
-                .filter { !$0.1.isEmpty }
             if !escalation.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(escalation, id: \.0) { (lvl, rows) in
-                        ForEach(rows) { a in
+                    ForEach(Array(escalation), id: \.level) { lvl in
+                        ForEach(lvl.assignments) { a in
                             CompactAssignmentRow(
                                 assignment: a,
-                                level: lvl,
+                                level: lvl.level,
                                 isMe: a.user.id == meID
                             )
                         }
@@ -403,10 +396,6 @@ private struct PolicyCard: View {
             }
         ))
     }
-
-    private func visibleAssignments(in level: OnCallLevel) -> [OnCallAssignment] {
-        level.assignments.filter { !store.isHidden(scheduleID: $0.hideKey) }
-    }
 }
 
 private struct CompactAssignmentRow: View {
@@ -418,7 +407,6 @@ private struct CompactAssignmentRow: View {
     @Environment(\.openURL) private var openURL
     @State private var hovering = false
 
-    private var isHidden: Bool { store.isHidden(scheduleID: assignment.hideKey) }
     private var isPinned: Bool { store.isPinned(key: assignment.hideKey) }
 
     var body: some View {
@@ -449,7 +437,6 @@ private struct CompactAssignmentRow: View {
             }
             Spacer(minLength: 4)
 
-            // Controls: visible on hover, plus end-time as a small caption when not hovering.
             if hovering {
                 Button {
                     store.setPinned(key: assignment.hideKey, pinned: !isPinned)
@@ -461,16 +448,6 @@ private struct CompactAssignmentRow: View {
                 }
                 .buttonStyle(.borderless)
                 .help(isPinned ? "Remove from menu bar" : "Show in menu bar")
-
-                Button {
-                    store.setHidden(scheduleID: assignment.hideKey, hidden: !isHidden)
-                } label: {
-                    Image(systemName: isHidden ? "eye.slash" : "eye")
-                        .font(.system(size: 10))
-                        .foregroundStyle(isHidden ? Color.orange : .secondary)
-                }
-                .buttonStyle(.borderless)
-                .help(isHidden ? "Show" : "Hide")
             } else if let end = assignment.end {
                 Text(Self.endFormatter.string(from: end))
                     .font(.system(size: 9))
@@ -479,7 +456,6 @@ private struct CompactAssignmentRow: View {
             }
         }
         .padding(.vertical, 1)
-        .opacity(isHidden ? 0.45 : 1)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture {
@@ -519,8 +495,8 @@ private struct ReorderModifier: ViewModifier {
     }
 }
 
-private struct HiddenAssignmentRow: View {
-    let item: HiddenAssignment
+private struct HiddenPolicyRow: View {
+    let group: EscalationPolicyGroup
     @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
 
@@ -531,27 +507,31 @@ private struct HiddenAssignmentRow: View {
                 .font(.system(size: 11))
                 .frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(item.assignment.schedule?.summary ?? item.assignment.user.summary ?? "Assignment")
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                    RoleBadge(level: item.level)
-                }
-                Text("\(item.policy.summary ?? "Escalation policy") · \(item.assignment.user.summary ?? "Unknown")")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                Text(group.policy.summary ?? "Escalation policy")
+                    .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
+                if let primary = group.primaryLevel?.assignments.first {
+                    Text("Primary: \(primary.user.summary ?? "—")")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if !group.services.isEmpty {
+                    Text(group.services.map(\.name).joined(separator: ", "))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             Button {
-                store.setHidden(scheduleID: item.assignment.hideKey, hidden: false)
+                store.setPolicyHidden(group.id, hidden: false)
             } label: {
                 Image(systemName: "eye")
                     .font(.system(size: 11))
                     .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.borderless)
-            .help("Unhide “\(item.assignment.hideLabel)”")
+            .help("Unhide “\(group.policy.summary ?? "service")”")
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
@@ -559,7 +539,7 @@ private struct HiddenAssignmentRow: View {
         .opacity(0.7)
         .contentShape(Rectangle())
         .onTapGesture {
-            if let s = item.assignment.user.html_url, let u = URL(string: s) { openURL(u) }
+            if let s = group.policy.html_url, let u = URL(string: s) { openURL(u) }
         }
     }
 }
@@ -605,7 +585,6 @@ private struct AssignmentRow: View {
     @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
 
-    private var isHidden: Bool { store.isHidden(scheduleID: assignment.hideKey) }
     private var isPinned: Bool { store.isPinned(key: assignment.hideKey) }
 
     var body: some View {
@@ -657,17 +636,7 @@ private struct AssignmentRow: View {
             }
             .buttonStyle(.borderless)
             .help(isPinned ? "Remove from menu bar" : "Show in menu bar")
-            Button {
-                store.setHidden(scheduleID: assignment.hideKey, hidden: !isHidden)
-            } label: {
-                Image(systemName: isHidden ? "eye.slash" : "eye")
-                    .font(.system(size: 11))
-                    .foregroundStyle(isHidden ? Color.orange : .secondary)
-            }
-            .buttonStyle(.borderless)
-            .help(isHidden ? "Show “\(assignment.hideLabel)”" : "Hide “\(assignment.hideLabel)”")
         }
-        .opacity(isHidden ? 0.45 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
             if let s = assignment.user.html_url, let u = URL(string: s) { openURL(u) }

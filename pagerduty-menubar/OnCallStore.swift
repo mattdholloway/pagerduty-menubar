@@ -65,11 +65,11 @@ final class OnCallStore: ObservableObject {
 
     // Settings
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
-    @AppStorage("hiddenScheduleIDs") private var hiddenScheduleIDsRaw: String = ""
+    @AppStorage("hiddenPolicyIDs") private var hiddenPolicyIDsRaw: String = ""
     @AppStorage("policyOrder") private var policyOrderRaw: String = ""
     @AppStorage("pinnedAssignmentKeys") private var pinnedKeysRaw: String = ""
 
-    private(set) var hiddenScheduleIDs: Set<String> = []
+    private(set) var hiddenPolicyIDs: Set<String> = []
     private(set) var policyOrder: [String] = []
     private(set) var pinnedKeys: [String] = []  // ordered
 
@@ -79,8 +79,8 @@ final class OnCallStore: ObservableObject {
 
     init() {
         self.hasToken = KeychainStore.loadToken() != nil
-        self.hiddenScheduleIDs = Set(
-            hiddenScheduleIDsRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        self.hiddenPolicyIDs = Set(
+            hiddenPolicyIDsRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty }
         )
         self.policyOrder = policyOrderRaw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         self.pinnedKeys = pinnedKeysRaw.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
@@ -90,10 +90,36 @@ final class OnCallStore: ObservableObject {
         }
     }
 
-    // MARK: - Policy ordering
+    // MARK: - Policy visibility
 
-    /// Groups in the user's preferred order; unknown EPs appended at end.
+    func isPolicyHidden(_ id: String) -> Bool { hiddenPolicyIDs.contains(id) }
+
+    func setPolicyHidden(_ id: String, hidden: Bool) {
+        if hidden { hiddenPolicyIDs.insert(id) }
+        else { hiddenPolicyIDs.remove(id) }
+        hiddenPolicyIDsRaw = hiddenPolicyIDs.sorted().joined(separator: ",")
+        objectWillChange.send()
+    }
+
+    func resetHiddenPolicies() {
+        hiddenPolicyIDs.removeAll()
+        hiddenPolicyIDsRaw = ""
+        objectWillChange.send()
+    }
+
+    var hiddenPolicyCount: Int { hiddenPolicyIDs.count }
+
+    /// Hidden policy groups resolved against current data, in their stored order.
+    var hiddenPolicies: [EscalationPolicyGroup] {
+        orderedGroupsIncludingHidden.filter { hiddenPolicyIDs.contains($0.id) }
+    }
+
+    /// Visible groups in user-preferred order.
     var orderedGroups: [EscalationPolicyGroup] {
+        orderedGroupsIncludingHidden.filter { !hiddenPolicyIDs.contains($0.id) }
+    }
+
+    private var orderedGroupsIncludingHidden: [EscalationPolicyGroup] {
         let byID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
         var seen = Set<String>()
         var result: [EscalationPolicyGroup] = []
@@ -169,41 +195,6 @@ final class OnCallStore: ObservableObject {
             }
         }
         return pinnedKeys.compactMap { byKey[$0] }
-    }
-
-    // MARK: - Schedule visibility
-
-    func isHidden(scheduleID: String) -> Bool {
-        hiddenScheduleIDs.contains(scheduleID)
-    }
-
-    func setHidden(scheduleID: String, hidden: Bool) {
-        if hidden { hiddenScheduleIDs.insert(scheduleID) }
-        else { hiddenScheduleIDs.remove(scheduleID) }
-        hiddenScheduleIDsRaw = hiddenScheduleIDs.sorted().joined(separator: ",")
-        objectWillChange.send()
-    }
-
-    func resetHiddenSchedules() {
-        hiddenScheduleIDs.removeAll()
-        hiddenScheduleIDsRaw = ""
-        objectWillChange.send()
-    }
-
-    var hiddenScheduleCount: Int { hiddenScheduleIDs.count }
-
-    /// All currently-hidden assignments paired with their parent escalation policy.
-    /// Stale ids (no longer matching any loaded assignment) are simply omitted.
-    var hiddenAssignments: [HiddenAssignment] {
-        var out: [HiddenAssignment] = []
-        for group in groups {
-            for level in group.levels {
-                for a in level.assignments where hiddenScheduleIDs.contains(a.hideKey) {
-                    out.append(HiddenAssignment(policy: group.policy, level: level.level, assignment: a))
-                }
-            }
-        }
-        return out.sorted { ($0.policy.summary ?? "") < ($1.policy.summary ?? "") }
     }
 
     // MARK: - Derived UI helpers
