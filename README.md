@@ -1,75 +1,170 @@
-# PagerDuty Menu Bar
+<div align="center">
 
-A native macOS menu bar app for keeping an eye on PagerDuty on-call schedules
-across the services you care about — built in Swift / SwiftUI as a personal,
-pragmatic alternative to opening the PagerDuty web UI.
+# 🛎️ PagerDuty Menu Bar
 
-> **Status:** personal project, works on macOS 14 (Sonoma) and later.
+**A pragmatic, native macOS menu bar app for living with PagerDuty on-call.**
 
-## Features
+See who's on call, when *you're* on next, and what the rest of the
+escalation chain looks like — all without opening a browser tab.
 
-- **Menu bar at a glance** — pin any schedule and the current on-call user's
-  first name shows directly in the menu bar (`Alice · Bob`, `Alice +2`).
-- **Your on-call schedule** — a top section listing every shift you have
-  (current + upcoming) across every escalation policy in the next 14 days,
-  with role badges (Primary / Secondary / Tertiary), start times and shift
-  duration.
-- **My services & schedules** — full cards for every service in your teams,
-  showing the primary on-call user prominently and the rest of the
-  escalation chain in compact rows underneath. Reorder cards with the up/down
-  arrows (or via drag-and-drop in Settings).
-- **Other services & schedules** — a searchable section listing every other
-  escalation policy on the account, so you can find anyone on-call anywhere.
-- **Schedule calendar** — click the calendar icon on any card for a
-  Gantt-style 7-day timeline popover with bars per level and per schedule.
-- **Hide / pin / order** — hide services you don't care about, pin schedules
-  to the menu bar, drag-and-drop reorder in Settings. All preferences persist.
-- **Auto-refresh** — every 5 minutes by default (configurable 1–60 min).
-- **Launch at login** — toggle in Settings (uses `SMAppService.mainApp`).
-- **Token storage** — your PagerDuty REST API token is stored in the macOS
-  Keychain only; it never leaves your machine except for direct calls to
-  `api.pagerduty.com`.
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000?style=flat-square&logo=apple)](https://www.apple.com/macos/)
+[![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
+[![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-1572B6?style=flat-square&logo=swift&logoColor=white)](https://developer.apple.com/xcode/swiftui/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/mattdholloway/pagerduty-menubar?style=flat-square)](https://github.com/mattdholloway/pagerduty-menubar/stargazers)
 
-## Requirements
+</div>
 
-- macOS 14.0 (Sonoma) or later
-- Xcode 15+ (16+ recommended)
-- A PagerDuty REST API user token (Profile → User Settings → Create API
-  User Token)
+---
 
-## Getting started
+## ✨ Why this exists
 
-1. Clone the repo and open `pagerduty-menubar.xcodeproj` in Xcode.
-2. Pick scheme `pagerduty-menubar`, destination **My Mac**.
-3. ⌘R to build & run. The bell icon appears in the menu bar.
-4. Open the app's Settings (⌘,) and paste your REST API token.
-5. The menu populates after the next refresh.
+PagerDuty's web UI is great. It's also a tab you forget to keep open. This
+app puts the answer to *"who's on call for X right now?"* one click away
+in your menu bar — and the answer to *"when am I next on?"* on the
+first row.
 
-### Installing locally
+> Personal project. Not affiliated with PagerDuty.
 
-After the app builds in Release mode (Product → Archive → Distribute App →
-Copy App), drag the resulting `pagerduty-menubar.app` into `/Applications`,
-then enable "Launch at login" in Settings.
+## 🎯 Features
 
-## Architecture
+<table>
+<tr>
+<td valign="top" width="33%">
 
-| File | Responsibility |
-| ---- | -------------- |
-| `pagerduty_menubarApp.swift` | App entry point — `MenuBarExtra` + `Settings` scenes |
-| `KeychainStore.swift` | API token Keychain wrapper |
-| `PagerDutyAPI.swift` | Async REST client for `/users/me`, `/services`, `/escalation_policies`, `/oncalls` |
-| `OnCallStore.swift` | `@MainActor ObservableObject` orchestrating fetch, state, ordering, pinning, hiding |
-| `MenuView.swift` | The dropdown UI — section layout, search, cards, rows |
-| `CalendarView.swift` | The Gantt-style schedule popover |
-| `SettingsView.swift` | Token, refresh interval, launch-at-login, reorder, visibility |
+### 🔔 At-a-glance menu bar
+Pin any schedule and the current on-call's **first name** lives in your
+menu bar, Outlook-style:
+`Alice · Bob · Carol +1`
+</td>
+<td valign="top" width="33%">
 
-## Privacy
+### 📅 Your on-call schedule
+The top section shows **every shift you have** across every escalation
+policy in the next 14 days — role-colored, with start times and
+shift duration.
+</td>
+<td valign="top" width="33%">
 
-- The token lives in your Keychain (item `mattdholloway.pagerduty-menubar /
-  pagerduty-api-token`).
+### 🧭 Stacked escalation chain
+Each service card shows the **Primary** in full and **Secondary /
+Tertiary** as compact rows underneath — no expand required.
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🗂️ My vs Other
+*My services & schedules* lists the policies your teams own.
+*Other services & schedules* is a searchable directory of every
+policy on the account.
+</td>
+<td valign="top">
+
+### 📆 Schedule calendar
+A side-flyout **Gantt-style 7-day timeline** per service with
+color-coded bars (Primary / Secondary / Tertiary), a "now"
+indicator, and click-through to PagerDuty.
+</td>
+<td valign="top">
+
+### 🧰 Make it yours
+**Drag-to-reorder**, eye-to-hide, pin-to-menu-bar, search
+filter, configurable refresh, launch-at-login. Everything
+persists.
+</td>
+</tr>
+</table>
+
+## 🚀 Install
+
+### Option 1 — Build from source (recommended)
+
+```bash
+git clone https://github.com/mattdholloway/pagerduty-menubar.git
+cd pagerduty-menubar
+open pagerduty-menubar.xcodeproj
+```
+
+In Xcode: scheme **pagerduty-menubar**, destination **My Mac**,
+`Product → Archive → Distribute App → Copy App`, drag the resulting
+`.app` into `/Applications`.
+
+### Option 2 — Run from Xcode
+
+Just hit ⌘R. The 🛎️ icon shows up in your menu bar.
+
+### First-launch setup
+
+1. Click the menu bar icon, then ⚙️ → Settings.
+2. Paste a PagerDuty **REST API user token**
+   (Profile → User Settings → Create API User Token).
+3. The menu populates after the next refresh (5 min by default — or
+   hit ↻ for an instant pull).
+
+## ⚙️ Configuration
+
+Everything lives in Settings (⌘,):
+
+| Setting | What it does |
+| ------- | ------------ |
+| **API token** | Stored in macOS Keychain only |
+| **Launch at login** | Adds the app via `SMAppService.mainApp` |
+| **Refresh every N minutes** | 1–60, default 5 |
+| **Reorder services** | Drag-and-drop in a normal-window list |
+| **Reset hidden / pinned / order** | One-click bulk reset |
+
+## 🛠 Requirements
+
+- macOS **14 (Sonoma)** or later
+- **Xcode 15+** (16+ recommended)
+- PagerDuty REST API user token
+
+## 🏗 Architecture
+
+```
+pagerduty-menubar/
+├── pagerduty_menubarApp.swift   MenuBarExtra + Settings scenes
+├── KeychainStore.swift          API token persistence
+├── PagerDutyAPI.swift           Async REST client
+├── OnCallStore.swift            @MainActor ObservableObject (state, fetch, ordering)
+├── MenuView.swift               Dropdown UI — sections, search, cards, rows
+├── CalendarView.swift           Gantt-style schedule popover
+└── SettingsView.swift           Token + preferences
+```
+
+- **SwiftUI** for everything (no AppKit windows beyond what Apple gives us).
+- **`MenuBarExtra(.window)`** as the root scene.
+- **Async/await** throughout the network layer.
+- **App Sandbox** on, only `com.apple.security.network.client` enabled.
+
+## 🔐 Privacy
+
+- Your token is stored **only** in your macOS Keychain
+  (service `mattdholloway.pagerduty-menubar`, account
+  `pagerduty-api-token`).
 - The app talks to `api.pagerduty.com` over HTTPS and nothing else.
-- App Sandbox is on; only `com.apple.security.network.client` is enabled.
+- No analytics, no telemetry, no third-party SDKs.
 
-## License
+## 🗺 Roadmap
 
-[MIT](LICENSE). Personal project — no warranty.
+- [ ] Optional menu bar count badge (e.g. number of incidents)
+- [ ] Quick "override" / take-on-call action
+- [ ] Notification when *you're about to be on*
+- [ ] Per-account quick-switcher (multiple PagerDuty workspaces)
+- [ ] Notarized .dmg releases via GitHub Actions
+
+## 🤝 Contributing
+
+Issues, ideas and PRs welcome. Open a discussion before large changes
+so we can align on direction.
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 [Matthew Holloway](https://github.com/mattdholloway)
+
+---
+
+<div align="center">
+<sub>Built with ☕️ in SwiftUI · Not affiliated with PagerDuty, Inc.</sub>
+</div>
