@@ -8,7 +8,7 @@ struct pagerduty_menubarApp: App {
         MenuBarExtra {
             MenuView()
                 .environmentObject(store)
-                .frame(width: 360)
+                .frame(width: 380)
         } label: {
             Label {
                 Text(store.menuBarTitle)
@@ -21,7 +21,7 @@ struct pagerduty_menubarApp: App {
         Settings {
             SettingsView()
                 .environmentObject(store)
-                .frame(width: 420, height: 220)
+                .frame(width: 460, height: 320)
         }
     }
 }

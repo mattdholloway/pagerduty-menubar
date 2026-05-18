@@ -118,7 +118,7 @@ struct MenuView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 }
-                .frame(maxHeight: 460)
+                .frame(minHeight: 360, maxHeight: 720)
             }
         }
     }
@@ -141,6 +141,20 @@ struct MenuView: View {
                 }
                 .buttonStyle(.borderless)
             }
+            if store.hiddenScheduleCount > 0 {
+                Divider().frame(height: 14)
+                Button {
+                    store.showHidden.toggle()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: store.showHidden ? "eye" : "eye.slash")
+                        Text("\(store.hiddenScheduleCount)")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.borderless)
+                .help(store.showHidden ? "Hide muted schedules" : "Show \(store.hiddenScheduleCount) hidden schedule\(store.hiddenScheduleCount == 1 ? "" : "s")")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -160,6 +174,7 @@ struct MenuView: View {
                     expanded: expandedPolicies.contains(group.id),
                     onToggle: { toggleExpanded(group.id) }
                 )
+                .environmentObject(store)
             }
         }
     }
@@ -181,6 +196,7 @@ struct MenuView: View {
                     expanded: expandedPolicies.contains(group.id),
                     onToggle: { toggleExpanded(group.id) }
                 )
+                .environmentObject(store)
             }
         } else if !search.isEmpty {
             Text("No matches for “\(search)”")
@@ -291,6 +307,7 @@ private struct PolicyCard: View {
     let expanded: Bool
     let onToggle: () -> Void
 
+    @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -330,10 +347,22 @@ private struct PolicyCard: View {
                 }
             }
 
-            // Primary on-call row
+            // Visible assignments (primary level)
             if let primary = group.primaryLevel {
-                ForEach(primary.assignments) { a in
-                    AssignmentRow(assignment: a, level: primary.level, isMe: a.user.id == meID, isPrimary: true)
+                let rows = visibleAssignments(in: primary)
+                if rows.isEmpty {
+                    Text("All schedules at the primary level are hidden")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(rows) { a in
+                        AssignmentRow(
+                            assignment: a,
+                            level: primary.level,
+                            isMe: a.user.id == meID,
+                            isPrimary: true
+                        )
+                    }
                 }
             } else {
                 Text("No one currently on call")
@@ -345,14 +374,27 @@ private struct PolicyCard: View {
             if expanded, group.levels.count > 1 {
                 Divider().padding(.vertical, 2)
                 ForEach(group.levels.dropFirst()) { lvl in
-                    ForEach(lvl.assignments) { a in
-                        AssignmentRow(assignment: a, level: lvl.level, isMe: a.user.id == meID, isPrimary: false)
+                    let rows = visibleAssignments(in: lvl)
+                    if !rows.isEmpty {
+                        ForEach(rows) { a in
+                            AssignmentRow(
+                                assignment: a,
+                                level: lvl.level,
+                                isMe: a.user.id == meID,
+                                isPrimary: false
+                            )
+                        }
                     }
                 }
             }
         }
         .padding(10)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func visibleAssignments(in level: OnCallLevel) -> [OnCallAssignment] {
+        if store.showHidden { return level.assignments }
+        return level.assignments.filter { !store.isHidden(scheduleID: $0.hideKey) }
     }
 }
 
@@ -394,7 +436,10 @@ private struct AssignmentRow: View {
     let isMe: Bool
     let isPrimary: Bool
 
+    @EnvironmentObject private var store: OnCallStore
     @Environment(\.openURL) private var openURL
+
+    private var isHidden: Bool { store.isHidden(scheduleID: assignment.hideKey) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -411,7 +456,7 @@ private struct AssignmentRow: View {
                             .background(Color.accentColor.opacity(0.2), in: Capsule())
                             .foregroundStyle(Color.accentColor)
                     }
-                    LevelBadge(level: level)
+                    RoleBadge(level: level)
                 }
                 if let sched = assignment.schedule?.summary {
                     Text(sched).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -429,7 +474,17 @@ private struct AssignmentRow: View {
                         .help(end.formatted(date: .complete, time: .shortened))
                 }
             }
+            Button {
+                store.setHidden(scheduleID: assignment.hideKey, hidden: !isHidden)
+            } label: {
+                Image(systemName: isHidden ? "eye.slash" : "eye")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isHidden ? Color.orange : .secondary)
+            }
+            .buttonStyle(.borderless)
+            .help(isHidden ? "Show “\(assignment.hideLabel)”" : "Hide “\(assignment.hideLabel)”")
         }
+        .opacity(isHidden ? 0.45 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
             if let s = assignment.user.html_url, let u = URL(string: s) { openURL(u) }
@@ -466,14 +521,33 @@ private struct Avatar: View {
     }
 }
 
-private struct LevelBadge: View {
+private struct RoleBadge: View {
     let level: Int
+
+    private var label: String {
+        switch level {
+        case 1: return "Primary"
+        case 2: return "Secondary"
+        case 3: return "Tertiary"
+        default: return "Level \(level)"
+        }
+    }
+
+    private var tint: Color {
+        switch level {
+        case 1: return .orange
+        case 2: return .blue
+        case 3: return .purple
+        default: return .secondary
+        }
+    }
+
     var body: some View {
-        Text("L\(level)")
+        Text(label)
             .font(.system(size: 9, weight: .bold))
-            .padding(.horizontal, 4).padding(.vertical, 1)
-            .background(level == 1 ? Color.orange.opacity(0.18) : Color.secondary.opacity(0.12), in: Capsule())
-            .foregroundStyle(level == 1 ? Color.orange : .secondary)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(tint.opacity(0.18), in: Capsule())
+            .foregroundStyle(tint)
     }
 }
 

@@ -15,6 +15,11 @@ struct OnCallAssignment: Identifiable, Hashable {
     let schedule: PDReference?
     let end: Date?
     var id: String { "\(user.id)-\(schedule?.id ?? "direct")-\(end?.timeIntervalSince1970 ?? 0)" }
+
+    /// Stable identifier used for hide/show. Falls back to a synthetic key
+    /// when no schedule is attached (direct user assignment in an EP).
+    var hideKey: String { schedule?.id ?? "user:\(user.id)" }
+    var hideLabel: String { schedule?.summary ?? (user.summary ?? "this assignment") }
 }
 
 struct EscalationPolicyGroup: Identifiable, Hashable {
@@ -50,9 +55,13 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var groups: [EscalationPolicyGroup] = []
     @Published private(set) var state: LoadState = .idle
     @Published var hasToken: Bool = false
+    @Published var showHidden: Bool = false
 
     // Settings
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 5
+    @AppStorage("hiddenScheduleIDs") private var hiddenScheduleIDsRaw: String = ""
+
+    private(set) var hiddenScheduleIDs: Set<String> = []
 
     private let api = PagerDutyAPI()
     private var refreshTask: Task<Void, Never>?
@@ -60,11 +69,35 @@ final class OnCallStore: ObservableObject {
 
     init() {
         self.hasToken = KeychainStore.loadToken() != nil
+        self.hiddenScheduleIDs = Set(
+            hiddenScheduleIDsRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        )
         if hasToken {
             startTimer()
             refresh()
         }
     }
+
+    // MARK: - Schedule visibility
+
+    func isHidden(scheduleID: String) -> Bool {
+        hiddenScheduleIDs.contains(scheduleID)
+    }
+
+    func setHidden(scheduleID: String, hidden: Bool) {
+        if hidden { hiddenScheduleIDs.insert(scheduleID) }
+        else { hiddenScheduleIDs.remove(scheduleID) }
+        hiddenScheduleIDsRaw = hiddenScheduleIDs.sorted().joined(separator: ",")
+        objectWillChange.send()
+    }
+
+    func resetHiddenSchedules() {
+        hiddenScheduleIDs.removeAll()
+        hiddenScheduleIDsRaw = ""
+        objectWillChange.send()
+    }
+
+    var hiddenScheduleCount: Int { hiddenScheduleIDs.count }
 
     // MARK: - Derived UI helpers
 

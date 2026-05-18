@@ -70,6 +70,19 @@ struct SettingsView: View {
                 Button("Refresh now") { store.refresh() }
                     .disabled(!store.hasToken)
             }
+
+            Section("Visibility") {
+                HStack {
+                    Text("Hidden schedules: \(store.hiddenScheduleCount)")
+                    Spacer()
+                    Button("Reset") { store.resetHiddenSchedules() }
+                        .disabled(store.hiddenScheduleCount == 0)
+                }
+                Toggle("Show hidden schedules in menu", isOn: $store.showHidden)
+                Text("Use the eye icon next to any schedule in the menu to hide it. Hidden schedules are remembered between launches.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
