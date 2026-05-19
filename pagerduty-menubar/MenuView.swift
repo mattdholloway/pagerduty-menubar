@@ -34,8 +34,10 @@ struct MenuView: View {
             footer
         }
         .onChange(of: search) { _, newValue in
-            if tab == .incidents, !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                store.loadOtherIncidentsIfNeeded()
+            let typed = !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if typed {
+                if tab == .incidents { store.loadOtherIncidentsIfNeeded() }
+                if tab == .schedules { store.loadAllPolicyRefsIfNeeded() }
             }
         }
         .onChange(of: tab) { _, _ in
@@ -116,14 +118,25 @@ struct MenuView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button {
-                store.refresh()
-            } label: {
-                Image(systemName: "arrow.clockwise")
+            if store.isRefreshing {
+                Button {
+                    store.cancelRefresh()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Cancel refresh")
+            } else {
+                Button {
+                    store.refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh now")
+                .disabled(!store.hasToken)
             }
-            .buttonStyle(.borderless)
-            .help("Refresh now")
-            .disabled(!store.hasToken || store.state == .loading)
 
             Button {
                 NSApp.activate(ignoringOtherApps: true)
@@ -146,7 +159,7 @@ struct MenuView: View {
     private var headerSubtitle: String {
         switch store.state {
         case .idle: return store.hasToken ? "Ready" : "Add an API token in Settings"
-        case .loading: return "Refreshing…"
+        case .loading: return store.refreshProgress ?? "Refreshing…"
         case .loaded(let date): return "Updated \(Self.relative.localizedString(for: date, relativeTo: Date()))"
         case .failed(let msg): return msg
         }
@@ -464,25 +477,29 @@ struct MenuView: View {
 
     @ViewBuilder
     private var otherPoliciesSection: some View {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let loaded = !store.allPolicyRefs.isEmpty
         let all = store.otherGroups
-        if all.isEmpty { EmptyView() } else {
-            let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let matches = q.isEmpty ? [] : all.filter { g in
-                if (g.policy.summary ?? "").lowercased().contains(q) { return true }
-                if g.levels.contains(where: { $0.assignments.contains { ($0.user.summary ?? "").lowercased().contains(q) } }) { return true }
-                return false
-            }
-            let displayCount = q.isEmpty ? all.count : matches.count
+        let matches = q.isEmpty ? [] : all.filter { g in
+            if (g.policy.summary ?? "").lowercased().contains(q) { return true }
+            if g.levels.contains(where: { $0.assignments.contains { ($0.user.summary ?? "").lowercased().contains(q) } }) { return true }
+            return false
+        }
+        let displayCount = loaded ? (q.isEmpty ? all.count : matches.count) : 0
 
-            sectionHeader(
-                symbol: "tray.full",
-                title: "Other services & schedules",
-                count: displayCount,
-                tint: .secondary
-            )
+        sectionHeader(
+            symbol: "tray.full",
+            title: "Other services & schedules",
+            count: displayCount,
+            tint: .secondary
+        )
 
-            if q.isEmpty {
-                HStack(spacing: 8) {
+        if q.isEmpty {
+            HStack(spacing: 8) {
+                if store.allPolicyRefsLoading {
+                    ProgressView().controlSize(.small)
+                    Text("Loading other policies…").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else if loaded {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.system(size: 12))
@@ -491,27 +508,45 @@ struct MenuView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
+                } else {
+                    Image(systemName: "tray.and.arrow.down")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                    Text("Tap to load every escalation policy on the account").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Load") { store.loadAllPolicyRefsIfNeeded() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
                 }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        } else if !loaded {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Loading other policies…").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+            .onAppear { store.loadAllPolicyRefsIfNeeded() }
+        } else if matches.isEmpty {
+            Text("No other services or schedules match “\(search)”")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
                 .padding(.vertical, 8)
-                .padding(.horizontal, 10)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
-            } else if matches.isEmpty {
-                Text("No other services or schedules match “\(search)”")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
-            } else {
-                VStack(spacing: 4) {
-                    ForEach(matches.prefix(20).map { $0 }) { group in
-                        OtherPolicyRow(group: group)
-                            .environmentObject(store)
-                    }
-                    if matches.count > 20 {
-                        Text("Showing 20 of \(matches.count) matches — refine the search to narrow further.")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 2)
-                    }
+        } else {
+            VStack(spacing: 4) {
+                ForEach(matches.prefix(20).map { $0 }) { group in
+                    OtherPolicyRow(group: group)
+                        .environmentObject(store)
+                }
+                if matches.count > 20 {
+                    Text("Showing 20 of \(matches.count) matches — refine the search to narrow further.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
                 }
             }
         }

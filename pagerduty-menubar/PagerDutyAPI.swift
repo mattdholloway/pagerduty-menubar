@@ -146,7 +146,7 @@ actor PagerDutyAPI {
             self.session = session
         } else {
             let cfg = URLSessionConfiguration.default
-            cfg.timeoutIntervalForRequest = 20
+            cfg.timeoutIntervalForRequest = 15
             cfg.waitsForConnectivity = true
             self.session = URLSession(configuration: cfg)
         }

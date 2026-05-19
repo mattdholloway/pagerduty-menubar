@@ -88,6 +88,16 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var incidentMutationError: String?
     @Published private(set) var pendingIncidentIDs: Set<String> = []
     @Published var recentIncidentAction: IncidentUndo?
+    @Published private(set) var refreshProgress: String?
+    @Published private(set) var allPolicyRefs: [PDReference] = []
+    @Published private(set) var allPolicyRefsLoading: Bool = false
+    @Published private(set) var upcomingByKey: [String: [PDOnCall]] = [:]
+    @Published private(set) var upcomingByPolicy: [String: [PDOnCall]] = [:]
+    @Published private(set) var currentByPolicy: [String: [PDOnCall]] = [:]
+    @Published private(set) var myPolicyIDs: Set<String> = []
+
+    /// Calendar / "next" lookahead window in days
+    static let lookaheadDays: Int = 14
 
     // Settings (refresh interval keeps using @AppStorage — it's a simple Int)
     @AppStorage("refreshMinutes") var refreshMinutes: Int = 20
@@ -476,25 +486,52 @@ final class OnCallStore: ObservableObject {
 
     // MARK: - Refresh
 
+    /// Whole-refresh deadline. Keeps us from spinning forever when one
+    /// endpoint stalls inside its own per-request retry loop.
+    static let refreshDeadlineSeconds: TimeInterval = 45
+
     func refresh() {
         guard hasToken else {
             state = .failed("No PagerDuty API token set.")
             return
         }
         resetOtherIncidents()
+        allPolicyRefs = []
         refreshTask?.cancel()
+        let deadline = Self.refreshDeadlineSeconds
         refreshTask = Task { [weak self] in
-            await self?.performRefresh()
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await self?.performRefresh() }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: UInt64(deadline * 1_000_000_000))
+                    await self?.timeoutRefresh()
+                }
+                // First child to finish wins; cancel the loser.
+                _ = await group.next()
+                group.cancelAll()
+            }
         }
     }
 
-    // Calendar / "next" lookahead window in days
-    static let lookaheadDays: Int = 14
+    /// Cancel the in-flight refresh and reset state.
+    func cancelRefresh() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        refreshProgress = nil
+        if case .loading = state { state = .idle }
+    }
 
-    @Published private(set) var upcomingByKey: [String: [PDOnCall]] = [:]
-    @Published private(set) var upcomingByPolicy: [String: [PDOnCall]] = [:]
-    @Published private(set) var currentByPolicy: [String: [PDOnCall]] = [:]
-    @Published private(set) var myPolicyIDs: Set<String> = []
+    var isRefreshing: Bool {
+        if case .loading = state { return true }
+        return false
+    }
+
+    @MainActor private func timeoutRefresh() {
+        guard case .loading = state else { return }
+        refreshTask?.cancel()
+        refreshProgress = nil
+        state = .failed("Refresh timed out after \(Int(Self.refreshDeadlineSeconds))s — tap ↻ to retry.")
+    }
 
     private func performRefresh() async {
         guard let token = KeychainStore.loadToken() else {
@@ -502,30 +539,30 @@ final class OnCallStore: ObservableObject {
             hasToken = false
             return
         }
-        // Apply the same rate-limit guard as the popover poll. If we're low on
-        // quota, surface that and skip — the next periodic tick will retry.
         if let rl = await api.lastRateLimit, rl.remaining < 100, rl.reset > Date() {
             state = .failed("Throttling to respect PagerDuty rate limit (resets \(Self.shortRelative.localizedString(for: rl.reset, relativeTo: Date())))")
             return
         }
         state = .loading
+        refreshProgress = "Loading user…"
         do {
             let me = try await api.currentUser(token: token)
-            let teamIDs = (me.teams ?? []).map { $0.id }
+            try Task.checkCancellation()
 
-            // Services + policies first so we know what "mine" means.
-            async let servicesTask = api.services(token: token, teamIDs: teamIDs)
-            async let allPoliciesTask = api.allEscalationPolicies(token: token)
-            let services = try await servicesTask
-            let allPolicies = try await allPoliciesTask
+            refreshProgress = "Loading services…"
+            let services = try await api.services(token: token, teamIDs: (me.teams ?? []).map(\.id))
+            try Task.checkCancellation()
 
             let myEPIDs = Set(services.compactMap { $0.escalation_policy?.id })
             let myServiceIDs = services.map(\.id)
-            let allEPIDs = Set(allPolicies.map(\.id)).union(myEPIDs)
 
-            // Scope incidents to MINE only to keep request volume sane on
-            // large accounts. Union of (assignee=me) ∪ (service in my teams).
-            // PagerDuty AND's filters per request, so we issue two and dedupe.
+            refreshProgress = "Loading on-calls…"
+            let now = Date()
+            let until = Calendar.current.date(byAdding: .day, value: Self.lookaheadDays, to: now) ?? now.addingTimeInterval(7 * 86400)
+            let windowed = try await api.onCalls(token: token, escalationPolicyIDs: Array(myEPIDs), since: now, until: until)
+            try Task.checkCancellation()
+
+            refreshProgress = "Loading incidents…"
             async let assignedTask = api.incidents(token: token, userIDs: [me.id])
             async let serviceTask = api.incidents(token: token, serviceIDs: myServiceIDs)
             let assigned = try await assignedTask
@@ -534,17 +571,19 @@ final class OnCallStore: ObservableObject {
             for inc in assigned { byID[inc.id] = inc }
             for inc in serviceScoped { byID[inc.id] = inc }
             let mineIncidents = Array(byID.values)
-
-            let now = Date()
-            let until = Calendar.current.date(byAdding: .day, value: Self.lookaheadDays, to: now) ?? now.addingTimeInterval(7 * 86400)
-            let windowed = try await api.onCalls(token: token, escalationPolicyIDs: Array(allEPIDs), since: now, until: until)
+            try Task.checkCancellation()
 
             let current = windowed.filter { oc in
                 (oc.start.map { $0 <= now } ?? true) && (oc.end.map { $0 > now } ?? true)
             }
             let upcoming = windowed.filter { ($0.start ?? .distantPast) > now }
 
-            let groups = Self.buildGroups(services: services, onCalls: current, allPolicyRefs: allPolicies)
+            // Build groups using ONLY policies we've seen via services /
+            // on-calls — the canonical full list is lazily loaded on demand
+            // (loadAllPolicyRefsIfNeeded) the first time the user opens the
+            // 'Other services & schedules' section.
+            let seenRefs = (services.compactMap { $0.escalation_policy }) + windowed.map(\.escalation_policy)
+            let groups = Self.buildGroups(services: services, onCalls: current, allPolicyRefs: seenRefs)
             let (byKey, upByPolicy) = Self.buildUpcomingIndexes(upcoming: upcoming)
             var curByPolicy: [String: [PDOnCall]] = [:]
             for oc in current {
@@ -559,16 +598,49 @@ final class OnCallStore: ObservableObject {
             self.currentByPolicy = curByPolicy
             self.activeIncidents = Self.sortIncidents(mineIncidents)
             self.state = .loaded(Date())
+            self.refreshProgress = nil
             persistCacheSnapshot()
 
-            // Phase 3: post macOS notifications for any newly-triggered
-            // incidents assigned to me.
             NotificationsCoordinator.shared.diffAndNotify(
                 incidents: self.activeIncidents,
                 myUserID: me.id
             )
+        } catch is CancellationError {
+            self.refreshProgress = nil
+            // Leave whatever state cancelRefresh / timeoutRefresh set.
         } catch {
+            self.refreshProgress = nil
             self.state = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+
+    /// Lazy load: full account-wide escalation policy list. Used by the
+    /// 'Other services & schedules' section. Not pulled on every refresh
+    /// any more — that endpoint is paginated across the whole account and
+    /// was the slowest call on the critical path.
+    func loadAllPolicyRefsIfNeeded() {
+        guard allPolicyRefs.isEmpty, !allPolicyRefsLoading,
+              let token = KeychainStore.loadToken() else { return }
+        allPolicyRefsLoading = true
+        Task { [weak self] in
+            defer { Task { @MainActor in self?.allPolicyRefsLoading = false } }
+            do {
+                let refs = try await self?.api.allEscalationPolicies(token: token) ?? []
+                await MainActor.run {
+                    guard let self else { return }
+                    self.allPolicyRefs = refs
+                    // Merge the new refs into `groups` so otherGroups can
+                    // surface policies that don't yet have any visible
+                    // services or current shifts.
+                    var byID = Dictionary(uniqueKeysWithValues: self.groups.map { ($0.id, $0) })
+                    for ref in refs where byID[ref.id] == nil {
+                        byID[ref.id] = EscalationPolicyGroup(policy: ref, services: [], levels: [])
+                    }
+                    self.groups = Array(byID.values).sorted { ($0.policy.summary ?? "") < ($1.policy.summary ?? "") }
+                }
+            } catch {
+                // Best-effort — leave the section in its empty state.
+            }
         }
     }
 
