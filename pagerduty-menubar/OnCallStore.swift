@@ -91,6 +91,8 @@ final class OnCallStore: ObservableObject {
     @Published private(set) var refreshProgress: String?
     @Published private(set) var allPolicyRefs: [PDReference] = []
     @Published private(set) var allPolicyRefsLoading: Bool = false
+    @Published private(set) var otherPolicyLoading: Set<String> = []
+    @Published private(set) var otherPolicyLoaded: Set<String> = []
     @Published private(set) var upcomingByKey: [String: [PDOnCall]] = [:]
     @Published private(set) var upcomingByPolicy: [String: [PDOnCall]] = [:]
     @Published private(set) var currentByPolicy: [String: [PDOnCall]] = [:]
@@ -497,6 +499,8 @@ final class OnCallStore: ObservableObject {
         }
         resetOtherIncidents()
         allPolicyRefs = []
+        otherPolicyLoaded.removeAll()
+        otherPolicyLoading.removeAll()
         refreshTask?.cancel()
         let deadline = Self.refreshDeadlineSeconds
         refreshTask = Task { [weak self] in
@@ -640,6 +644,52 @@ final class OnCallStore: ObservableObject {
                 }
             } catch {
                 // Best-effort — leave the section in its empty state.
+            }
+        }
+    }
+
+    /// On-demand: fetch current on-calls for a single 'other' escalation
+    /// policy and merge them into the matching group so the row no longer
+    /// shows "No one currently on call". Idempotent.
+    func loadOtherPolicyOnCallsIfNeeded(_ policyID: String) {
+        guard !otherPolicyLoaded.contains(policyID),
+              !otherPolicyLoading.contains(policyID),
+              !myPolicyIDs.contains(policyID),
+              let token = KeychainStore.loadToken() else { return }
+        otherPolicyLoading.insert(policyID)
+        Task { [weak self] in
+            defer { Task { @MainActor in self?.otherPolicyLoading.remove(policyID) } }
+            let now = Date()
+            let until = Calendar.current.date(byAdding: .day, value: 1, to: now) ?? now.addingTimeInterval(86400)
+            do {
+                guard let calls = try await self?.api.onCalls(
+                    token: token,
+                    escalationPolicyIDs: [policyID],
+                    since: now,
+                    until: until
+                ) else { return }
+                let current = calls.filter { oc in
+                    (oc.start.map { $0 <= now } ?? true) && (oc.end.map { $0 > now } ?? true)
+                }
+                await MainActor.run {
+                    guard let self else { return }
+                    self.otherPolicyLoaded.insert(policyID)
+                    guard let idx = self.groups.firstIndex(where: { $0.id == policyID }) else { return }
+                    // Rebuild levels for this group from the fetched on-calls.
+                    let levelsDict = Dictionary(grouping: current, by: { $0.escalation_level })
+                    let levels = levelsDict.keys.sorted().map { lvl -> OnCallLevel in
+                        let assignments = (levelsDict[lvl] ?? [])
+                            .map { OnCallAssignment(user: $0.user, schedule: $0.schedule, end: $0.end) }
+                            .sorted { ($0.user.summary ?? "") < ($1.user.summary ?? "") }
+                        return OnCallLevel(level: lvl, assignments: assignments)
+                    }
+                    let g = self.groups[idx]
+                    self.groups[idx] = EscalationPolicyGroup(policy: g.policy, services: g.services, levels: levels)
+                }
+            } catch {
+                // Mark as loaded anyway so we don't retry on every row
+                // appearance — a manual refresh will clear and retry.
+                await MainActor.run { self?.otherPolicyLoaded.insert(policyID) }
             }
         }
     }

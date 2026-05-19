@@ -1309,6 +1309,8 @@ private struct OtherPolicyRow: View {
     private var primaryUser: String? {
         group.primaryLevel?.assignments.first?.user.summary
     }
+    private var isLoading: Bool { store.otherPolicyLoading.contains(group.id) }
+    private var isLoaded: Bool { store.otherPolicyLoaded.contains(group.id) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -1320,13 +1322,21 @@ private struct OtherPolicyRow: View {
                 Text(group.policy.summary ?? "Escalation policy")
                     .font(.system(size: 11, weight: .medium))
                     .truncatedWithTooltip(group.policy.summary)
-                let line = primaryUser.map { "Primary: \($0)" } ?? "No one currently on call"
+                let line: String = {
+                    if let u = primaryUser { return "Primary: \(u)" }
+                    if isLoading { return "Loading on-call…" }
+                    if isLoaded { return "No one currently on call" }
+                    return "On-call not loaded yet"
+                }()
                 Text(line)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .truncatedWithTooltip(line)
             }
             Spacer()
+            if isLoading {
+                ProgressView().controlSize(.mini)
+            }
             Button {
                 showCalendar.toggle()
             } label: {
@@ -1355,6 +1365,7 @@ private struct OtherPolicyRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onAppear { store.loadOtherPolicyOnCallsIfNeeded(group.id) }
     }
 }
 
