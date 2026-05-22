@@ -49,6 +49,11 @@ urgent state regardless of which tab is open.
 - **Ack / Resolve** with optimistic UI and a 5-second undo strip.
 - **macOS notifications** for newly-triggered incidents assigned to
   you, with inline Ack / Resolve / Open actions.
+- **On-call handover notifications** — one batched notification per
+  refresh when the responders on your team's policies change.
+  Customisable: primary-level only, or only when *you* go on/off
+  call. Stale-on-wake suppression so a long sleep doesn't dump a
+  backlog.
 - Menu bar icon switches to ❗️ whenever you have a triggered incident.
 
 ### 📅 Schedules
@@ -135,6 +140,7 @@ Everything lives in Settings (⌘,):
 | **Updates** | Manual check / install + auto-install toggle |
 | **Startup** | Launch automatically at login |
 | **Refresh** | Pull interval (1–60 min, default 20) + Refresh now |
+| **Notifications** | On-call change alerts: master toggle, primary-only, me-only |
 | **Reorder services** | Drag-and-drop in a normal-window list |
 | **Visibility** | Reset hidden / pinned / order |
 
@@ -222,6 +228,8 @@ installs in place.
 - [ ] Notification when *you're about to be on*
 - [ ] Per-account quick-switcher (multiple PagerDuty workspaces)
 - [ ] Notarized + signed releases via GitHub Actions
+
+> ✅ Done: macOS notifications for on-call assignment changes (batched, customisable).
 
 ## 🤝 Contributing
 
