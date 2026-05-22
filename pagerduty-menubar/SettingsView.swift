@@ -10,6 +10,12 @@ struct SettingsView: View {
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
 
+    // On-call change notification preferences. Keys are shared with
+    // NotificationsCoordinator's @AppStorageDefault wrappers.
+    @AppStorage("notifyOnCallChanges") private var notifyOnCallChanges: Bool = true
+    @AppStorage("notifyOnCallChangesPrimaryOnly") private var notifyOnCallChangesPrimaryOnly: Bool = true
+    @AppStorage("notifyOnCallChangesMeOnly") private var notifyOnCallChangesMeOnly: Bool = false
+
     var body: some View {
         Form {
             Section("PagerDuty API token") {
@@ -117,6 +123,17 @@ struct SettingsView: View {
                 }
                 Button("Refresh now") { store.refresh() }
                     .disabled(!store.hasToken)
+            }
+
+            Section("Notifications") {
+                Toggle("Notify when on-call assignments change", isOn: $notifyOnCallChanges)
+                Toggle("Primary responders only (lowest escalation level)", isOn: $notifyOnCallChangesPrimaryOnly)
+                    .disabled(!notifyOnCallChanges)
+                Toggle("Only when the change involves me", isOn: $notifyOnCallChangesMeOnly)
+                    .disabled(!notifyOnCallChanges)
+                Text("Changes are detected once per refresh and combined into a single notification per refresh. Hidden services and policies outside your teams never trigger notifications, and updates older than the most recent refresh window are skipped (so waking from sleep doesn't dump a backlog).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Reorder services") {

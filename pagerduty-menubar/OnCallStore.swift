@@ -120,6 +120,18 @@ final class OnCallStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var timerTask: Task<Void, Never>?
 
+    // Timestamp of the most recent currentByPolicy snapshot we trust as a
+    // baseline for on-call change diffing. Reset on token clear; seeded from
+    // disk cache at launch. Notifications are suppressed when the previous
+    // baseline is too old (i.e. app was asleep for hours) so we don't dump a
+    // backlog of stale "changes" on the user at relaunch.
+    private var lastOnCallBaselineAt: Date?
+
+    /// Hard cap for how stale the previous baseline may be when emitting
+    /// on-call change notifications, regardless of the configured refresh
+    /// interval.
+    static let onCallBaselineMaxAgeSeconds: TimeInterval = 60 * 60
+
     init() {
         let d = UserDefaults.standard
         self.hasToken = KeychainStore.loadToken() != nil
@@ -145,6 +157,7 @@ final class OnCallStore: ObservableObject {
             self.upcomingByKey = snap.upcomingByKey
             self.activeIncidents = snap.activeIncidents
             self.state = .loaded(snap.savedAt)
+            self.lastOnCallBaselineAt = snap.savedAt
             cacheAge = Date().timeIntervalSince(snap.savedAt)
         }
 
@@ -484,6 +497,7 @@ final class OnCallStore: ObservableObject {
         upcomingByPolicy = [:]
         upcomingByKey = [:]
         state = .idle
+        lastOnCallBaselineAt = nil
     }
 
     // MARK: - Refresh
@@ -599,11 +613,31 @@ final class OnCallStore: ObservableObject {
             self.groups = groups
             self.upcomingByKey = byKey
             self.upcomingByPolicy = upByPolicy
+            let previousCurrentByPolicy = self.currentByPolicy
+            let previousBaselineAt = self.lastOnCallBaselineAt
             self.currentByPolicy = curByPolicy
+            self.lastOnCallBaselineAt = Date()
             self.activeIncidents = Self.sortIncidents(mineIncidents)
             self.state = .loaded(Date())
             self.refreshProgress = nil
             persistCacheSnapshot()
+
+            if let baselineAt = previousBaselineAt {
+                let allowed = min(
+                    TimeInterval(max(1, refreshMinutes) * 60 * 2 + 300),
+                    Self.onCallBaselineMaxAgeSeconds
+                )
+                if Date().timeIntervalSince(baselineAt) <= allowed {
+                    NotificationsCoordinator.shared.notifyOnCallChanges(
+                        previous: previousCurrentByPolicy,
+                        current: curByPolicy,
+                        groups: groups,
+                        hiddenPolicyIDs: hiddenPolicyIDs,
+                        myPolicyIDs: myEPIDs,
+                        myUserID: me.id
+                    )
+                }
+            }
 
             NotificationsCoordinator.shared.diffAndNotify(
                 incidents: self.activeIncidents,
